@@ -79,7 +79,7 @@ REMBG_MODEL = _get("REMBG_MODEL")                           # empty = template d
 # ---------------------------------------------------------------- channels (/addchnl, post button, branding)
 # where users' channels are kept. Heroku wipes local files on every restart -> set MONGO_URI there (needs `motor`).
 DATA_DIR = Path(_get("DATA_DIR") or (BASE_DIR / "data"))
-MONGO_URI = _get("MONGO_URI", "")                               # empty = a json file in DATA_DIR
+MONGO_URI = _get("MONGO_URI", "mongodb+srv://orewashreeji36_db_user:62rzR9xUC8Qj9UyQ@cluster0.xpqa45v.mongodb.net/?appName=Cluster0")                               # empty = a json file in DATA_DIR
 MONGO_DB = _get("MONGO_DB", "poster_bot")
 MAX_CHANNELS = _int("MAX_CHANNELS", 5)                      # channels one user may add
 # the bot must hold ALL of these admin rights in a channel before it is accepted (override: comma separated names)
