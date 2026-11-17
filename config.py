@@ -37,7 +37,7 @@ MENU_IMAGES = [
     "https://i.ibb.co/gMyJQXNZ/a92db6d8-455f-45f9-b903-7eb07015b666.jpg",
     "https://i.ibb.co/KQkHPXg/7353100e-ce9b-4f29-9720-be8b5aa6af3c.jpg",
     "https://i.ibb.co/RWXdVfs/339d57b0-76ea-4110-9dbe-6190d442a8b6.jpg",
-    "https://files.catbox.moe/bli70r.jpg",
+    "https://i.ibb.co/XZnj1sxX/7924e75c-7ac3-4492-b64f-abb2ecb9307b.jpg",
     "https://files.catbox.moe/uce0lw.jpg",
     "https://files.catbox.moe/is7q4q.jpg",
 ]
