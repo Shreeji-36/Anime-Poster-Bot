@@ -30,7 +30,7 @@ ALLOWED_USERS = _ids("7355641270")                       # comma separated ids; 
 
 # ---------------------------------------------------------------- links + images (/start, /help)
 MAIN_CHANNEL_URL = _get("MAIN_CHANNEL_URL", "https://t.me/Cosmic_Bots")
-SUPPORT_URL = _get("SUPPORT_URL", "https://t.me/CantarellaBotschat")
+SUPPORT_URL = _get("SUPPORT_URL", "https://t.me/Cosmic_Bots_Support")
 
 # /start and /help are sent as a photo, one picked at random from this list
 MENU_IMAGES = [
