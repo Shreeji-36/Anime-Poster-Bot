@@ -26,7 +26,7 @@ BASE_DIR = Path(__file__).resolve().parent
 API_ID = _int("API_ID", "38528447")                                  # https://my.telegram.org
 API_HASH = _get("API_HASH", "a0b76b9ff89c3f30adbb2696438c6581")
 BOT_TOKEN = _get("BOT_TOKEN", "") or _get("8696827332:AAHKg-9kgX9gFYxvjkK42uCmJY2HVYm5jeY")  # @BotFather
-ALLOWED_USERS = _ids("ALLOWED_USERS")                       # comma separated ids; empty = everybody
+ALLOWED_USERS = _ids("7355641270")                       # comma separated ids; empty = everybody
 
 # ---------------------------------------------------------------- links + images (/start, /help)
 MAIN_CHANNEL_URL = _get("MAIN_CHANNEL_URL", "https://t.me/cantarellabots")
