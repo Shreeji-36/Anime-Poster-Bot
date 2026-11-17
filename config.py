@@ -72,7 +72,7 @@ SAMPLE_ANIME_ID = _int("SAMPLE_ANIME_ID", 1535)             # AniList id used fo
 SAMPLES_DIR = BASE_DIR / "samples"                          # samples/style_N.jpg = your own previews
 
 # ---------------------------------------------------------------- character art keys (optional)
-FANART_API_KEY = _get("FANART_API_KEY", "")                     # fanart.tv
+FANART_API_KEY = _get("FANART_API_KEY", "ceca8607c3616191b31cd25ea6066932")                     # fanart.tv
 TMDB_API_KEY = _get("TMDB_API_KEY", "")                         # fallback to find the TVDB id
 REMBG_MODEL = _get("REMBG_MODEL")                           # empty = template default (isnet-anime)
 
