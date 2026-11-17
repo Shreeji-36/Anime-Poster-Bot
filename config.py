@@ -35,7 +35,7 @@ SUPPORT_URL = _get("SUPPORT_URL", "https://t.me/Cosmic_Bots_Support")
 # /start and /help are sent as a photo, one picked at random from this list
 MENU_IMAGES = [
     "https://i.ibb.co/gMyJQXNZ/a92db6d8-455f-45f9-b903-7eb07015b666.jpg",
-    "https://files.catbox.moe/9ufgme.jpg",
+    "https://i.ibb.co/KQkHPXg/7353100e-ce9b-4f29-9720-be8b5aa6af3c.jpg",
     "https://files.catbox.moe/4b8jvw.jpg",
     "https://files.catbox.moe/bli70r.jpg",
     "https://files.catbox.moe/uce0lw.jpg",
