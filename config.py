@@ -39,7 +39,7 @@ MENU_IMAGES = [
     "https://i.ibb.co/RWXdVfs/339d57b0-76ea-4110-9dbe-6190d442a8b6.jpg",
     "https://i.ibb.co/XZnj1sxX/7924e75c-7ac3-4492-b64f-abb2ecb9307b.jpg",
     "https://i.ibb.co/933qHsRL/15929c5c-a3ad-4d64-b05d-ca1ae9101b40.jpg",
-    "https://files.catbox.moe/is7q4q.jpg",
+    "https://i.ibb.co/23crXskK/b1e2f0da-b410-415f-acaa-610014122617.jpg",
 ]
 
 # ---------------------------------------------------------------- posters
