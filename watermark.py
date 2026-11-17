@@ -1,5 +1,5 @@
 """
-watermark.py - stamps every poster with the "Cantarella Bots" mark.
+watermark.py - stamps every poster with the "Galaxy Networkk" mark.
 
 Three layers, all applied by apply() as the very last step of every render (dataset._render_sync),
 so every poster, every download (jpg / png) and every /styles preview carries them:
