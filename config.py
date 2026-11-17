@@ -24,7 +24,7 @@ BASE_DIR = Path(__file__).resolve().parent
 
 # ---------------------------------------------------------------- telegram (Kurigram)
 API_ID = _int("API_ID", "")                                  # https://my.telegram.org
-API_HASH = _get("API_HASH", "")
+API_HASH = _get("API_HASH", "a0b76b9ff89c3f30adbb2696438c6581")
 BOT_TOKEN = _get("BOT_TOKEN", "") or _get("8696827332:AAHKg-9kgX9gFYxvjkK42uCmJY2HVYm5jeY")  # @BotFather
 ALLOWED_USERS = _ids("ALLOWED_USERS")                       # comma separated ids; empty = everybody
 
