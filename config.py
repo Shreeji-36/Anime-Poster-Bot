@@ -29,7 +29,7 @@ BOT_TOKEN = _get("BOT_TOKEN", "") or _get("8696827332:AAHKg-9kgX9gFYxvjkK42uCmJY
 ALLOWED_USERS = _ids("7355641270")                       # comma separated ids; empty = everybody
 
 # ---------------------------------------------------------------- links + images (/start, /help)
-MAIN_CHANNEL_URL = _get("MAIN_CHANNEL_URL", "https://t.me/cantarellabots")
+MAIN_CHANNEL_URL = _get("MAIN_CHANNEL_URL", "https://t.me/Cosmic_Bots")
 SUPPORT_URL = _get("SUPPORT_URL", "https://t.me/CantarellaBotschat")
 
 # /start and /help are sent as a photo, one picked at random from this list
