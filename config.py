@@ -73,7 +73,7 @@ SAMPLES_DIR = BASE_DIR / "samples"                          # samples/style_N.jp
 
 # ---------------------------------------------------------------- character art keys (optional)
 FANART_API_KEY = _get("FANART_API_KEY", "ceca8607c3616191b31cd25ea6066932")                     # fanart.tv
-TMDB_API_KEY = _get("TMDB_API_KEY", "")                         # fallback to find the TVDB id
+TMDB_API_KEY = _get("TMDB_API_KEY", "da12734582d6cfdd41c398c6a9393601")                         # fallback to find the TVDB id
 REMBG_MODEL = _get("REMBG_MODEL")                           # empty = template default (isnet-anime)
 
 # ---------------------------------------------------------------- channels (/addchnl, post button, branding)
