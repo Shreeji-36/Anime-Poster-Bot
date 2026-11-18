@@ -4,8 +4,10 @@ import asyncio
 import html
 import io
 import logging
+import os
 import random
 import re
+import time
 from collections import defaultdict
 
 from pyrogram import StopPropagation, enums, filters
@@ -36,6 +38,7 @@ STYLE_BACK, STYLE_NEXT = "⏪", "⏩"
 POSTER_PREV, POSTER_NEXT = "◀️", "▶️"
 
 STATE: dict[int, dict] = defaultdict(dict)
+RENDER_TIMEOUT = int(os.environ.get("RENDER_TIMEOUT", "240"))   # seconds; the free 0.1 CPU can be very slow
 
 
 # ======================================================================
@@ -267,8 +270,17 @@ async def generate(client, user_id: int, chat_id: int, *, panel: bool = False, s
         except RPCError:
             pass
         ud["opts"]["chname"] = await chstore.get_brand(user_id)              # the user's channel branding goes on every poster
+        t0 = time.monotonic()
+        log.info("generate: start style=%s anime=%r", ud.get("style"), ud["anime"].title)
         try:
-            rendered = await dataset.make_poster(ud["style"], ud["anime"], ud["opts"])
+            rendered = await asyncio.wait_for(dataset.make_poster(ud["style"], ud["anime"], ud["opts"]),
+                                              timeout=RENDER_TIMEOUT)
+        except asyncio.TimeoutError:
+            log.error("generate: render timed out after %s s (style %s)", RENDER_TIMEOUT, ud.get("style"))
+            await client.send_message(
+                chat_id, bq(sc("⏱ that took too long. try a lighter style (3, 6, 7, 10) or another anime.")),
+                reply_markup=kb([btn("🎨 styles", "sl0", color=BLUE), btn("🔍 new anime", "na", color=GREEN)]))
+            return
         except dataset.NoArt as e:
             kind = e.args[0] if e.args else "banner"
             await client.send_message(
@@ -282,6 +294,8 @@ async def generate(client, user_id: int, chat_id: int, *, panel: bool = False, s
                 chat_id, bq(sc("😕 i couldn't render that poster. try another style or another anime.")),
                 reply_markup=kb([btn("🎨 styles", "sl0", color=BLUE), btn("🔍 new anime", "na", color=GREEN)]))
             return
+        log.info("generate: rendered in %.1fs (jpg %d KB, png %d KB, %s)", time.monotonic() - t0,
+                 len(rendered.jpg) // 1024, len(rendered.png) // 1024, rendered.size)
         ud["last"] = rendered
         markup = options_keyboard(ud["style"], ud["opts"], ud["anime"]) if panel else result_keyboard(ud["style"])
 
@@ -292,7 +306,14 @@ async def generate(client, user_id: int, chat_id: int, *, panel: bool = False, s
             delete_id = source_msg.id
         elif ud.get("pmsg"):
             edit_id = ud["pmsg"]
-        await _show_photo(client, ud, chat_id, rendered, _caption(ud, rendered), markup, edit_id, delete_id)
+        try:
+            await _show_photo(client, ud, chat_id, rendered, _caption(ud, rendered), markup, edit_id, delete_id)
+            log.info("generate: photo sent, total %.1fs", time.monotonic() - t0)
+        except Exception:
+            log.exception("generate: sending the poster failed")
+            await client.send_message(
+                chat_id, bq(sc("⚠️ the poster was made but telegram did not accept it. tap 🔄 redo or try another style.")),
+                reply_markup=kb([btn("🎨 styles", "sl0", color=BLUE), btn("🔍 new anime", "na", color=GREEN)]))
     finally:
         ud["busy"] = False
 
