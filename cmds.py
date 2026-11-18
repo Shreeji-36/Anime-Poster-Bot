@@ -55,15 +55,18 @@ def start_text(user) -> str:
 
 ABOUT_TEXT = bq(
     sc("🌸 about me") + "\n\n" +
-    sc(f"i turn anilist data into {N_STYLES} different thumbnails / posters.\n"
-       "send me an anime name, pick the right result and flip through every style.\n"
+    sc(f"i turn anilist and tmdb data into {N_STYLES} different thumbnails / posters.\n"
+       "send me an anime, movie or tv show name, pick the right result and flip through every style.\n"
        "change the button text, the poster / banner or your channel branding, then grab the full quality file.\n\n"
-       "data · anilist\nlibrary · kurigram"))
+       "data · anilist · tmdb\nlibrary · kurigram")) + "\n" + bq(
+    "This product uses the TMDB API but is not endorsed or certified by TMDB.")
 
 HELP_CMDS = [
     ("/start", "wake me up"),
     ("/help", "show this message"),
     ("/poster naruto", "make a poster of any anime"),
+    ("/movies inception", "make a poster of any movie"),
+    ("/tvshows breaking bad", "make a poster of any tv show"),
     ("/styles", "see every style with a preview"),
     ("/addchnl", "add your channel (i must be full admin there)"),
     ("/mychnls", "your channels"),
@@ -74,7 +77,7 @@ HELP_CMDS = [
 def help_text() -> str:
     lines = "\n".join(f"<code>{c}</code> ➜ {sc(d)}" for c, d in HELP_CMDS)
     return bq(sc("📖 all commands") + "\n\n" + lines) + "\n" + bq(
-        sc("or just send an anime name and i will search it for you."))
+        sc("or just send a name and i will search it (anime, movie or tv show - whichever command you used last)."))
 
 
 def pick_style_text(query: str | None = None) -> str:
@@ -149,7 +152,7 @@ def result_keyboard(style: int):
         [btn(POSTER_PREV, "pv", raw=True, color=BLUE), btn(f"🎨 style {style}/{N_STYLES}", "sl", color=GREEN),
          btn(POSTER_NEXT, "nx", raw=True, color=BLUE)],
         [btn("⚙️ options", "op", color=BLUE), btn("🔄 redo", "rg", color=GREEN)],
-        [btn("📁 full quality file", "fl", color=BLUE), btn("🔍 new anime", "na", color=GREEN)],
+        [btn("📁 full quality file", "fl", color=BLUE), btn("🔍 new title", "na", color=GREEN)],
         [btn("📣 post to channel", "ch_post", color=GREEN)],
     )
 
@@ -191,13 +194,26 @@ def _ud(user_id: int) -> dict:
     return ud
 
 
+_KIND_CODE = {"anime": "a", "movie": "m", "tv": "t"}               # used inside the result buttons: pk:m:550
+_CODE_KIND = {v: k for k, v in _KIND_CODE.items()}
+
+
+def _kind(ud: dict) -> str:
+    return ud.get("kind") or "anime"
+
+
+def _word(ud: dict) -> str:
+    """'anime' | 'movie' | 'tv show' - the kind of title the user is looking for right now"""
+    return dataset.KIND_WORD[_kind(ud)]
+
+
 def _caption(ud: dict, rendered) -> str:
     a = ud["anime"]
     cap = f"🎬 <b>{html.escape(a.title)}</b>\n" + sc(f"🎨 style {ud['style']} · {rendered.size[0]}×{rendered.size[1]}")
     if POSTERS[ud["style"]].character and a.characters:
         n, label = dataset.char_state(a, ud["opts"].get("char", 0))
         cap += "\n" + sc("🧍 art: ") + html.escape(label) + "\n" + sc("⚙ options → ◀ ▶ to change character")
-        if a.main_name and not label.startswith("main character"):
+        if dataset.kind_of(a) == "anime" and a.main_name and not label.startswith("main character"):
             cap += "\n" + sc("⭐ main character: ") + html.escape(a.main_name)
     elif not POSTERS[ud["style"]].character:
         kind = dataset.art_kind(ud["style"])
@@ -283,20 +299,20 @@ async def generate(client, user_id: int, chat_id: int, *, panel: bool = False, s
             log.error("generate: render timed out after %s s (style %s)", RENDER_TIMEOUT, ud.get("style"))
             await client.send_message(
                 chat_id, bq(sc("⏱ that took too long. try a lighter style (3, 6, 7, 10) or another anime.")),
-                reply_markup=kb([btn("🎨 styles", "sl0", color=BLUE), btn("🔍 new anime", "na", color=GREEN)]))
+                reply_markup=kb([btn("🎨 styles", "sl0", color=BLUE), btn("🔍 new title", "na", color=GREEN)]))
             return
         except dataset.NoArt as e:
             kind = e.args[0] if e.args else "banner"
             await client.send_message(
-                chat_id, bq(sc(f"😕 no {kind} found for this anime, and style {ud.get('style')} needs one. "
+                chat_id, bq(sc(f"😕 no {kind} found for this title, and style {ud.get('style')} needs one. "
                                f"try another style.")),
-                reply_markup=kb([btn("🎨 styles", "sl0", color=BLUE), btn("🔍 new anime", "na", color=GREEN)]))
+                reply_markup=kb([btn("🎨 styles", "sl0", color=BLUE), btn("🔍 new title", "na", color=GREEN)]))
             return
         except Exception:
             log.exception("render failed (style %s)", ud.get("style"))
             await client.send_message(
                 chat_id, bq(sc("😕 i couldn't render that poster. try another style or another anime.")),
-                reply_markup=kb([btn("🎨 styles", "sl0", color=BLUE), btn("🔍 new anime", "na", color=GREEN)]))
+                reply_markup=kb([btn("🎨 styles", "sl0", color=BLUE), btn("🔍 new title", "na", color=GREEN)]))
             return
         log.info("generate: rendered in %.1fs (jpg %d KB, png %d KB, %s)", time.monotonic() - t0,
                  len(rendered.jpg) // 1024, len(rendered.png) // 1024, rendered.size)
@@ -317,7 +333,7 @@ async def generate(client, user_id: int, chat_id: int, *, panel: bool = False, s
             log.exception("generate: sending the poster failed")
             await client.send_message(
                 chat_id, bq(sc("⚠️ the poster was made but telegram did not accept it. tap 🔄 redo or try another style.")),
-                reply_markup=kb([btn("🎨 styles", "sl0", color=BLUE), btn("🔍 new anime", "na", color=GREEN)]))
+                reply_markup=kb([btn("🎨 styles", "sl0", color=BLUE), btn("🔍 new title", "na", color=GREEN)]))
     finally:
         ud["busy"] = False
 
@@ -419,6 +435,7 @@ async def _reply_with_image(message, text: str, markup):
 async def cmd_start(client, message):
     ud = _ud(message.from_user.id)
     ud["await"] = None
+    ud["kind"] = "anime"
     ud.pop("pending", None)
     await _reply_with_image(message, start_text(message.from_user), start_keyboard())
 
@@ -432,12 +449,32 @@ async def cmd_styles(client, message):
     await open_viewer(client, message.chat.id, ud.get("style") or 1)
 
 
-async def cmd_poster(client, message):
+async def _title_command(client, message, kind: str, example: str):
+    """/poster  /movies  /tvshows : switch to that kind of title, then search the name (or ask for it)."""
+    uid = message.from_user.id
+    ud = _ud(uid)
+    ud["kind"] = kind
     query = " ".join(message.command[1:]).strip()
     if not query:
-        await message.reply_text(bq(sc("usage: ") + "<code>/poster anime name</code>"))
+        ud["await"] = "name"
+        ud.pop("pending", None)
+        await message.reply_text(bq(sc("usage: ") + f"<code>{example}</code>\n" +
+                                    sc(f"or just send me the {_word(ud)} name now.")),
+                                 reply_markup=cancel_keyboard())
         return
-    await _handle_name(client, message.from_user.id, message.chat.id, query)
+    await _handle_name(client, uid, message.chat.id, query[:100])
+
+
+async def cmd_poster(client, message):
+    await _title_command(client, message, "anime", "/poster anime name")
+
+
+async def cmd_movies(client, message):
+    await _title_command(client, message, "movie", "/movies movie name")
+
+
+async def cmd_tvshows(client, message):
+    await _title_command(client, message, "tv", "/tvshows tv show name")
 
 
 # ======================================================================
@@ -464,7 +501,7 @@ async def _choose_style(client, user_id: int, chat_id: int, style: int, message)
         return
     ud["await"] = "name"
     await _edit(message, bq(f"✅ {sc('style')} <b>{style}</b> {sc('selected')} ➜ {sc(POSTERS[style].blurb)}\n\n"
-                            + sc("✍️ now send me the anime name.")), cancel_keyboard())
+                            + sc(f"✍️ now send me the {_word(ud)} name.")), cancel_keyboard())
 
 
 async def _handle_name(client, user_id: int, chat_id: int, query: str):
@@ -486,24 +523,27 @@ async def _run_search(client, user_id: int, chat_id: int, query: str, source_msg
         await status.edit_text(text)
     else:
         status = await client.send_message(chat_id, text)
+    kind = _kind(ud)
     try:
-        results = await dataset.search_anime(query)
+        results = await dataset.search_title(kind, query)
     except Exception:
-        log.exception("anilist search failed")
-        await status.edit_text(bq(sc("⚠️ anilist isn't answering right now. try again in a moment.")),
+        log.exception("%s search failed", dataset.SOURCE_NAME[kind])
+        await status.edit_text(bq(sc(f"⚠️ {dataset.SOURCE_NAME[kind].lower()} isn't answering right now. "
+                                     f"try again in a moment.")),
                                reply_markup=kb([btn("🔁 try again", "na", color=GREEN)]))
         ud["await"] = "name"
         return
     if not results:
         ud["await"] = "name"
-        await status.edit_text(bq(sc("😕 nothing found for ") + f"“{q}”\n" +
-                                  sc("send another spelling or the japanese / romaji title.")),
+        hint = ("send another spelling or the japanese / romaji title." if kind == "anime"
+                else "check the spelling or try the english title.")
+        await status.edit_text(bq(sc("😕 nothing found for ") + f"“{q}”\n" + sc(hint)),
                                reply_markup=cancel_keyboard())
         return
     rows = []
     for r in results:
         label = " · ".join(str(x) for x in (r["title"], r["year"], r["format"]) if x)
-        rows.append([btn(label[:60], f"pk:{r['id']}", raw=True, color=BLUE)])
+        rows.append([btn(label[:60], f"pk:{_KIND_CODE[kind]}:{r['id']}", raw=True, color=BLUE)])
     rows.append([btn("✖️ cancel", "cx", color=RED)])
     await status.edit_text(bq(sc("🔎 results for ") + f"“{q}” " + sc("➜ pick one:")), reply_markup=kb(*rows))
 
@@ -533,12 +573,15 @@ async def on_pick(client, cq):
         await _edit(cq.message, bq(sc("session expired ➜ send /start again.")))
         return
     await _edit(cq.message, bq(sc("⏳ fetching data and artwork…")))
+    parts = cq.data.split(":")                                       # pk:<id>  (old buttons)  |  pk:<a/m/t>:<id>
+    kind, ident = (_CODE_KIND.get(parts[1], "anime"), int(parts[2])) if len(parts) == 3 else ("anime", int(parts[1]))
     try:
-        ud["anime"] = await dataset.load_anime(int(cq.data.split(":")[1]))
+        ud["anime"] = await dataset.load_title(kind, ident)
+        ud["kind"] = kind
     except Exception:
-        log.exception("load_anime failed")
+        log.exception("loading the %s failed", kind)
         await _edit(cq.message, bq(sc("⚠️ couldn't load that title. try another result.")),
-                    kb([btn("🔍 new anime", "na", color=GREEN)]))
+                    kb([btn("🔍 new title", "na", color=GREEN)]))
         return
     ud["await"] = None
     ud["opts"]["char"] = 0                                          # new anime -> first character candidate
@@ -606,7 +649,7 @@ async def on_button(client, cq):
     if data == "na":                                               # new anime -> name listener
         await cq.answer()
         ud["await"] = "name"
-        text = bq(sc("🔍 send me the anime name."))
+        text = bq(sc(f"🔍 send me the {_word(ud)} name."))
         if msg.photo:
             await client.send_message(cid, text, reply_markup=cancel_keyboard())
         else:
@@ -701,7 +744,9 @@ async def post_start(app):
     await app.set_bot_commands([
         BotCommand("start", "Wake me up"),
         BotCommand("help", "All commands + support"),
-        BotCommand("poster", "Make a poster: /poster Naruto"),
+        BotCommand("poster", "Anime poster: /poster Naruto"),
+        BotCommand("movies", "Movie poster: /movies Inception"),
+        BotCommand("tvshows", "TV show poster: /tvshows Breaking Bad"),
         BotCommand("styles", "Preview every poster style"),
         BotCommand("addchnl", "Add your channel (I must be full admin)"),
         BotCommand("mychnls", "Your channels"),
@@ -722,5 +767,7 @@ def register(app):
     app.add_handler(MessageHandler(cmd_help, filters.command("help")))
     app.add_handler(MessageHandler(cmd_styles, filters.command("styles")))
     app.add_handler(MessageHandler(cmd_poster, filters.command("poster")))
+    app.add_handler(MessageHandler(cmd_movies, filters.command(["movies", "movie"])))
+    app.add_handler(MessageHandler(cmd_tvshows, filters.command(["tvshows", "tvshow", "tv"])))
     app.add_handler(CallbackQueryHandler(on_button))
     app.add_handler(MessageHandler(on_text, filters.private & filters.create(_not_command)))
