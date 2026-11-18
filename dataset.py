@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import html
 import importlib.util
 import io
@@ -326,6 +327,18 @@ async def _get_bytes(client: httpx.AsyncClient, url: str | None) -> bytes | None
 _SHARPEN = ImageFilter.UnsharpMask(radius=1.4, percent=55, threshold=2)     # takes the softness out of the enlarge
 
 
+# MEMORY: the free Render instance has 512 MB. A 4000 px RGBA png is ~60 MB decoded, so every image is
+# shrunk to MAX_SIDE px right after loading (set MAX_IMAGE_SIDE in the Render environment to change it).
+MAX_SIDE = int(os.environ.get("MAX_IMAGE_SIDE", "1800"))
+
+
+def _limit(img: Image.Image) -> Image.Image:
+    """Shrink (in place, same ratio) when the longest side is bigger than MAX_SIDE."""
+    if max(img.size) > MAX_SIDE:
+        img.thumbnail((MAX_SIDE, MAX_SIDE), Image.LANCZOS)
+    return img
+
+
 def _grow(img: Image.Image, min_w: int = 0, min_h: int = 0) -> Image.Image:
     """Enlarge img (same ratio) until it reaches min_w / min_h. Returns img itself when it is already big enough.
     Capped at config.MAX_UPSCALE so a tiny file is not blown up into mush."""
@@ -344,7 +357,7 @@ def _grow(img: Image.Image, min_w: int = 0, min_h: int = 0) -> Image.Image:
 
 def _grow_character(img: Image.Image) -> Image.Image:
     """Transparent character PNG (styles 1-7): short / small -> at least CHAR_MIN_HEIGHT tall."""
-    return _grow(img, min_h=config.CHAR_MIN_HEIGHT)
+    return _grow(_limit(img), min_h=config.CHAR_MIN_HEIGHT)
 
 
 def _grow_art(img: Image.Image) -> Image.Image:
@@ -362,8 +375,10 @@ def _grow_bytes(data: bytes | None) -> bytes | None:
         img = Image.open(io.BytesIO(data))
         img.load()
         img = img.convert("RGB")
+        shrunk = max(img.size) > MAX_SIDE
+        _limit(img)
         big = _grow_art(img)
-        if big is img:
+        if big is img and not shrunk:
             return data
         out = io.BytesIO()
         big.save(out, "JPEG", quality=95, subsampling=0)
@@ -713,7 +728,7 @@ def _sources_meta(a: Anime) -> dict:
 # ---- AniList id -> TVDB id (fanart.tv is indexed by TVDB id). Free, no key. TMDB is the fallback. ----
 _MAP_URL = "https://raw.githubusercontent.com/Fribb/anime-lists/master/anime-list-full.json"
 _MAP_FILE = BASE_DIR / ".cache" / "anilist_tvdb.json"
-_MAP_MAX_AGE = 7 * 86400
+_MAP_MAX_AGE = 10 * 365 * 86400      # the small file is committed to the repo; never re-download on Render
 _tvdb_map: dict[int, int] | None = None
 
 
@@ -790,8 +805,13 @@ async def _fanart_candidates(client, a: Anime, limit: int) -> list:
     fanart.tv does not say WHICH character is on an image, so the user picks in Options."""
     urls = _fanart_urls(await _fanart_data(client, a), ("characterart", "hdclearart", "clearart"))[:limit]
     src = _sources()
-    imgs = await asyncio.gather(*[src.fetch_image(client, u, rgba=True) for u in urls])
-    return [img for img in imgs if img is not None and src.has_transparency(img)]
+    out = []
+    for u in urls:                                   # MEMORY: one by one, not asyncio.gather
+        img = await src.fetch_image(client, u, rgba=True)
+        if img is not None and src.has_transparency(img):
+            out.append(await asyncio.to_thread(_limit, img))
+        del img
+    return out
 
 
 async def _ensure_character(a: Anime):
@@ -1033,9 +1053,32 @@ def _render_sync(style_id: int, a: Anime, opts: dict) -> Rendered:
     return Rendered(jpg=jpg.getvalue(), png=png.getvalue(), size=img.size)
 
 
+def _peak_mb() -> int:
+    """Highest memory this process has used so far, in MB (Linux)."""
+    try:
+        import resource
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
+    except Exception:
+        return -1
+
+
+def _free_memory() -> None:
+    gc.collect()
+    try:                                                 # hand freed memory back to the OS (Linux / glibc)
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+
+
 async def make_poster(style_id: int, a: Anime, opts: dict | None = None) -> Rendered:
     if style_id not in POSTERS:
         raise ValueError(f"unknown poster style {style_id}")
-    await ensure_art(a, style_id, opts)                  # loads only what THIS style uses
-    async with _RENDER_SLOTS:
-        return await asyncio.to_thread(_render_sync, style_id, a, opts or {})
+    async with _RENDER_SLOTS:                            # MEMORY: downloading + resizing art is heavy too -> inside the slot
+        try:
+            await ensure_art(a, style_id, opts)          # loads only what THIS style uses
+            res = await asyncio.to_thread(_render_sync, style_id, a, opts or {})
+            log.info("style %s rendered, peak memory so far: %s MB", style_id, _peak_mb())
+            return res
+        finally:
+            _free_memory()
