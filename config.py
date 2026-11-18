@@ -23,10 +23,10 @@ def _ids(name: str) -> set[int]:
 BASE_DIR = Path(__file__).resolve().parent
 
 # ---------------------------------------------------------------- telegram (Kurigram)
-API_ID = _int("API_ID", "38528447")                                  # https://my.telegram.org
-API_HASH = _get("API_HASH", "a0b76b9ff89c3f30adbb2696438c6581")
-BOT_TOKEN = _get("BOT_TOKEN", "") or _get("8696827332:AAHKg-9kgX9gFYxvjkK42uCmJY2HVYm5jeY")  # @BotFather
-ALLOWED_USERS = _ids("ALLOWED_USERS")                       # comma separated ids; empty = everybody
+API_ID = _int("API_ID", 0)                                  # set in Render -> Environment
+API_HASH = _get("API_HASH")
+BOT_TOKEN = _get("BOT_TOKEN")                                  # @BotFather - NEVER write the token in this file
+ALLOWED_USERS = _ids("ALLOWED_USERS")                       # env var, comma separated telegram user ids; empty = everybody
 
 # ---------------------------------------------------------------- links + images (/start, /help)
 MAIN_CHANNEL_URL = _get("MAIN_CHANNEL_URL", "https://t.me/Cosmic_Bots")
@@ -47,7 +47,7 @@ BRAND_TOP = _get("BRAND_TOP", "ANI")                        # brand on styles 8 
 BRAND_BOTTOM = _get("BRAND_BOTTOM", "CROX")
 USE_CHARACTER_PNG = _get("USE_CHARACTER_PNG", "1") != "0"   # styles 1, 2, 4, 5: try transparent fanart.tv PNGs
 USE_ANILIST_CUTOUT = _get("USE_ANILIST_CUTOUT", "0") == "1"  # also offer an AniList character cut-out (rembg). off = fanart.tv only
-FANART_CANDIDATES = _int("FANART_CANDIDATES", 15)           # how many fanart.tv PNGs to offer (styles 1, 2, 4, 5). was 6
+FANART_CANDIDATES = _int("FANART_CANDIDATES", 3)            # how many fanart.tv PNGs to offer (styles 1, 2, 4, 5). 15 is far too many for 512 MB RAM
 POSTER_CHOICES = _int("POSTER_CHOICES", 12)                 # most AniList posters to cycle through (styles 3, 6, 7, 9, 10, 11, 13, 14)
 BANNER_CHOICES = _int("BANNER_CHOICES", 12)                 # most AniList banners to cycle through (styles 8, 12)
 
@@ -64,22 +64,22 @@ try:
 except ValueError:
     CHAR_MEDIUM_FILL, CHAR_WIDE_STRETCH = 0.75, 1.35
 try:
-    MAX_UPSCALE = max(1.0, float(_get("MAX_UPSCALE", "4")))  # never enlarge more than this many times
+    MAX_UPSCALE = max(1.0, float(_get("MAX_UPSCALE", "2")))  # never enlarge more than this many times
 except ValueError:
-    MAX_UPSCALE = 4.0
-RENDER_WORKERS = _int("RENDER_WORKERS", 2)                  # posters rendered at the same time
+    MAX_UPSCALE = 2.0
+RENDER_WORKERS = _int("RENDER_WORKERS", 1)                  # posters rendered at the same time (keep 1 on the free tier)
 SAMPLE_ANIME_ID = _int("SAMPLE_ANIME_ID", 1535)             # AniList id used for the /styles previews
 SAMPLES_DIR = BASE_DIR / "samples"                          # samples/style_N.jpg = your own previews
 
 # ---------------------------------------------------------------- character art keys (optional)
-FANART_API_KEY = _get("FANART_API_KEY", "ceca8607c3616191b31cd25ea6066932")                     # fanart.tv
-TMDB_API_KEY = _get("TMDB_API_KEY", "da12734582d6cfdd41c398c6a9393601")                         # fallback to find the TVDB id
+FANART_API_KEY = _get("FANART_API_KEY")                     # fanart.tv
+TMDB_API_KEY = _get("TMDB_API_KEY")                         # fallback to find the TVDB id
 REMBG_MODEL = _get("REMBG_MODEL")                           # empty = template default (isnet-anime)
 
 # ---------------------------------------------------------------- channels (/addchnl, post button, branding)
 # where users' channels are kept. Heroku wipes local files on every restart -> set MONGO_URI there (needs `motor`).
 DATA_DIR = Path(_get("DATA_DIR") or (BASE_DIR / "data"))
-MONGO_URI = _get("MONGO_URI", "mongodb+srv://orewashreeji36_db_user:62rzR9xUC8Qj9UyQ@cluster0.xpqa45v.mongodb.net/?appName=Cluster0")                               # empty = a json file in DATA_DIR
+MONGO_URI = _get("MONGO_URI")                               # empty = a json file in DATA_DIR (lost on every Render restart)
 MONGO_DB = _get("MONGO_DB", "poster_bot")
 MAX_CHANNELS = _int("MAX_CHANNELS", 5)                      # channels one user may add
 # the bot must hold ALL of these admin rights in a channel before it is accepted (override: comma separated names)
