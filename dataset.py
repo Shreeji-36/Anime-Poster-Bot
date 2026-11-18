@@ -20,6 +20,7 @@ from PIL import Image, ImageFilter
 
 import chname
 import config
+import tmdb
 
 log = logging.getLogger("dataset")
 
@@ -149,18 +150,18 @@ class PosterStyle:
 POSTERS: dict[int, PosterStyle] = {p.id: p for p in [
     PosterStyle(1, "Style 1", "1920x1080 · fanart.tv PNG (poster if none)", button=True, character=True),
     PosterStyle(2, "Style 2", "1920x1080 · fanart.tv PNG (poster if none)", button=True, character=True),
-    PosterStyle(3, "Style 3", "1920x1080 · AniList poster", button=True),
+    PosterStyle(3, "Style 3", "1920x1080 · poster", button=True),
     PosterStyle(4, "Style 4", "1920x1080 · fanart.tv PNG (poster if none)", button=True, character=True),
     PosterStyle(5, "Style 5", "1920x1080 · fanart.tv PNG (poster if none)", button=True, character=True),
-    PosterStyle(6, "Style 6", "1920x1080 · AniList poster", button=True),
-    PosterStyle(7, "Style 7", "1920x1080 · AniList poster", button=True),
-    PosterStyle(8, "Style 8", "Brand lockup + info row, AniList banner", brand=True),
-    PosterStyle(9, "Style 9", "Streaming-home look, AniList poster + match %"),
-    PosterStyle(10, "Style 10", "White + pink, big half-circle frame, AniList poster", button=True),
-    PosterStyle(11, "Style 11", "Light 1280x720, red block + AniList poster", button=True),
-    PosterStyle(12, "Style 12", "Dark violet glow, AniList banner background"),
-    PosterStyle(13, "Style 13", "Orange slash, AniList poster + rating cards", button=True, brand=True),
-    PosterStyle(14, "Style 14", "Peach/teal, AniList poster in an arched panel", button=True),
+    PosterStyle(6, "Style 6", "1920x1080 · poster", button=True),
+    PosterStyle(7, "Style 7", "1920x1080 · poster", button=True),
+    PosterStyle(8, "Style 8", "Brand lockup + info row, banner", brand=True),
+    PosterStyle(9, "Style 9", "Streaming-home look, poster + match %"),
+    PosterStyle(10, "Style 10", "White + pink, big half-circle frame, poster", button=True),
+    PosterStyle(11, "Style 11", "Light 1280x720, red block + poster", button=True),
+    PosterStyle(12, "Style 12", "Dark violet glow, banner background"),
+    PosterStyle(13, "Style 13", "Orange slash, poster + rating cards", button=True, brand=True),
+    PosterStyle(14, "Style 14", "Peach/teal, poster in an arched panel", button=True),
 ]}
 
 
@@ -398,6 +399,52 @@ async def load_anime(anilist_id: int) -> Anime:
     return Anime(raw=media)
 
 
+# ======================================================================
+# 2b. movies + tv shows (TMDB).  They are converted into the AniList record shape (see tmdb.py), so every
+#     poster style, the poster / banner choices and the fanart.tv art keep working unchanged.
+# ======================================================================
+KIND_WORD = {"anime": "anime", "movie": "movie", "tv": "tv show"}          # used in bot messages
+SOURCE_NAME = {"anime": "AniList", "movie": "TMDB", "tv": "TMDB"}
+_KIND_UPPER = {"anime": "ANIME", "movie": "MOVIE", "tv": "TV SHOW"}
+_KIND_NAME = {"anime": "Anime", "movie": "Movie", "tv": "TV Show"}
+_KIND_NAV = {"anime": "ANIME", "movie": "MOVIES", "tv": "SERIES"}
+
+
+def kind_of(a) -> str:
+    """'anime' | 'movie' | 'tv'"""
+    return ((getattr(a, "raw", None) or {}).get("_kind")) or "anime"
+
+
+def _is_anime(a) -> bool:
+    return kind_of(a) == "anime"
+
+
+def _word(a) -> str:
+    return _KIND_UPPER.get(kind_of(a), "ANIME")
+
+
+def _name(a) -> str:
+    return _KIND_NAME.get(kind_of(a), "Anime")
+
+
+def _nav(a) -> str:
+    return _KIND_NAV.get(kind_of(a), "ANIME")
+
+
+async def search_title(kind: str, query: str, limit: int = 6) -> list[dict]:
+    """kind = 'anime' | 'movie' | 'tv'  ->  [{id, title, year, format}]"""
+    if kind == "anime":
+        return await search_anime(query, limit)
+    return await tmdb.search(kind, query, limit)
+
+
+async def load_title(kind: str, ident: int) -> Anime:
+    """Metadata of one anime / movie / tv show. Images are fetched later, per style (ensure_art)."""
+    if kind == "anime":
+        return await load_anime(ident)
+    return Anime(raw=await tmdb.load_raw(kind, int(ident)))
+
+
 # ----------------------------------------------------------------------
 # which image each style uses - and ONLY that one gets loaded
 #   1, 2, 4, 5                      fanart.tv transparent PNG   (no PNG found -> AniList poster)
@@ -435,9 +482,9 @@ def _base_items(a: Anime, kind: str) -> list:
     if kind == "poster":
         ci = a.raw.get("coverImage") or {}
         u = ci.get("extraLarge") or ci.get("large")
-        return [("AniList poster", u)] if u else []
+        return [(f"{SOURCE_NAME[kind_of(a)]} poster", u)] if u else []
     u = a.raw.get("bannerImage")
-    return [("AniList banner", u)] if u else []
+    return [(f"{SOURCE_NAME[kind_of(a)]} banner", u)] if u else []
 
 
 def _art_items(a: Anime, kind: str) -> list:
@@ -454,7 +501,8 @@ async def list_art(a: Anime, kind: str) -> None:
     items = list(_base_items(a, kind))
     try:
         async with httpx.AsyncClient(headers=HEADERS, timeout=25, follow_redirects=True) as client:
-            media = (await _anilist(client, ART_QUERY, {"id": int(a.raw["id"])})).get("Media") or {}
+            media = ((await _anilist(client, ART_QUERY, {"id": int(a.raw["id"])})).get("Media") or {}
+                     if _is_anime(a) else {})
         for e in (media.get("relations") or {}).get("edges") or []:
             n = e.get("node") or {}
             ci = n.get("coverImage") or {}
@@ -471,6 +519,9 @@ async def list_art(a: Anime, kind: str) -> None:
             for i, ep in enumerate(media.get("streamingEpisodes") or [], 1):
                 if ep.get("thumbnail"):
                     items.append((f"AniList · episode {ep.get('title') or i}", ep["thumbnail"]))
+        if not _is_anime(a):                                              # movie / tv show: TMDB posters / backdrops
+            t = a.raw["_tmdb"]
+            items += await tmdb.list_images(t["kind"], t["id"], kind, t.get("lang"))
     except Exception as e:
         log.warning("listing %s choices failed: %s", kind, e)
     seen, out = set(), []
@@ -772,6 +823,13 @@ async def _fanart_data(client, a: Anime) -> dict:
     if "fanart" in a._cache:
         return a._cache["fanart"]
     data: dict = {}
+    if not _is_anime(a):                                                   # TMDB title: tv -> TVDB id, movie -> TMDB id
+        try:
+            data = await tmdb.fanart_record(client, a.raw)
+        except Exception as e:
+            log.warning("fanart.tv lookup failed: %s", e)
+        a._cache["fanart"] = data
+        return data
     try:
         src = _sources()
         if src.FANART_KEY:
@@ -803,7 +861,8 @@ def _fanart_urls(data: dict, keys: tuple) -> list:
 async def _fanart_candidates(client, a: Anime, limit: int) -> list:
     """Several transparent images from fanart.tv, most-liked first.
     fanart.tv does not say WHICH character is on an image, so the user picks in Options."""
-    urls = _fanart_urls(await _fanart_data(client, a), ("characterart", "hdclearart", "clearart"))[:limit]
+    keys = ("hdmovieclearart", "movieart") if kind_of(a) == "movie" else ("characterart", "hdclearart", "clearart")
+    urls = _fanart_urls(await _fanart_data(client, a), keys)[:limit]
     src = _sources()
     out = []
     for u in urls:                                   # MEMORY: one by one, not asyncio.gather
@@ -826,6 +885,13 @@ async def _ensure_character(a: Anime):
         src = _sources()
         log.info("character art for %r: FANART_API_KEY=%s TMDB_API_KEY=%s", a.title,
                  "set" if src.FANART_KEY else "MISSING", "set" if src.TMDB_KEY else "not set (fallback off)")
+        if not _is_anime(a):                                            # movie / tv show: fanart.tv only
+            async with httpx.AsyncClient(headers=HEADERS, timeout=25, follow_redirects=True) as client:
+                for i, img in enumerate(await _fanart_candidates(client, a, FANART_CANDIDATES), 1):
+                    img = await asyncio.to_thread(_grow_character, img)
+                    a.characters.append((f"fanart.tv #{i}", img))
+            log.info("character art (%s): %d candidate(s)", kind_of(a), len(a.characters))
+            return
         async with httpx.AsyncClient(headers=HEADERS, timeout=25, follow_redirects=True) as client:
             meta = _sources_meta(a)
             meta["tvdb_id"] = await _tvdb_id_for(client, a.raw["id"])   # if None -> TMDB fallback
@@ -944,11 +1010,14 @@ def _render_11(n, a, o):
     syn = clean_text(r.get("description"), 250)
     eps = r.get("episodes")
     season = " ".join(x for x in ((r.get("season") or "").upper(), str(_year(r) or "")) if x)
-    info = " · ".join(x for x in (season, f"{eps} EPISODES" if eps else "") if x) or "ANIME"
+    extra = f"{eps} EPISODES" if eps else ""
+    if kind_of(a) == "movie" and r.get("duration"):
+        extra = f"{r['duration']} MIN"
+    info = " · ".join(x for x in (season, extra) if x) or _word(a)
     tf = mod.get_font("Poppins-Bold.ttf", 66)                 # same font the template draws with
     l1, l2 = (wrap_to_width(a.title, lambda t: tf.getlength(t) / mod.SCALE + 4, 735, 2) + [""])[:2]
     anime = dict(season_info=info, title_line1=l1, title_line2=l2,
-                 studio=(_studio(r) or "ANIME").upper(), tags=_tags_upper(r, 3) or ["ANIME"],
+                 studio=(_studio(r) or _word(a)).upper(), tags=_tags_upper(r, 3) or [_word(a)],
                  highlight_words=pick_highlights(syn), synopsis=syn, button_text=o["button"])
     with _SOURCE_LOCK, tempfile.TemporaryDirectory() as tmp:
         _SOURCE.POSTER_SOURCE = _save_tmp(cover, tmp, "cover.png")
@@ -966,16 +1035,16 @@ def _render_13(n, a, o):
     ch_name = ((ch.get("node") or {}).get("name") or {}).get("full") or "Main Cast"
     tags = [t["name"] for t in (r.get("tags") or []) if not t.get("isMediaSpoiler")][:3]
     score = _score(r)
-    nav = ["HOME", "ANIME", "TRENDING", "NEWS"]
+    nav = ["HOME", _nav(a), "TRENDING", "NEWS"]
     room = 198 - getattr(mod, "LEFT_X", 40) - 14                 # the nav links start at a fixed x: a long brand must not run into them
     if chname.text_width("Poppins-Bold.ttf", 21, "".join(o["brand"])) > room:
         nav = []
-    anime = dict(brand=o["brand"], nav_links=nav, nav_active="ANIME",
-                 title=a.title, synopsis=syn, tags=_tags_upper(r, 3) or ["ANIME"],
-                 button_text=o["button"], side_label="FEATURED CHARACTER",
+    anime = dict(brand=o["brand"], nav_links=nav, nav_active=_nav(a),
+                 title=a.title, synopsis=syn, tags=_tags_upper(r, 3) or [_word(a)],
+                 button_text=o["button"], side_label="FEATURED CHARACTER" if _is_anime(a) else "TOP CAST",
                  character_name=ch_name[:22], character_role=(ch.get("role") or "MAIN").upper(),
-                 rating=(score or 0) / 10, genres=(r.get("genres") or ["Anime"])[:3],
-                 themes=tags or ["Anime"])
+                 rating=(score or 0) / 10, genres=(r.get("genres") or [_name(a)])[:3],
+                 themes=tags or [_name(a)])
     # hero = whole-cover crop for the slanted panel, avatar = square from the top of the cover
     hero_aspect = 0.62
     with _SOURCE_LOCK, tempfile.TemporaryDirectory() as tmp:
@@ -995,7 +1064,7 @@ def _render_14(n, a, o):
     syn = clean_text(r.get("description"), 200)
     tf = mod.font("Lora-Italic-Variable.ttf", 76, 700)
     title_lines = wrap_to_width(a.title, lambda t: tf.getlength(t) / mod.S, 580, 3)
-    anime = dict(title_lines=title_lines, tags=_tags_upper(r, 3) or ["ANIME"],
+    anime = dict(title_lines=title_lines, tags=_tags_upper(r, 3) or [_word(a)],
                  highlight_words=pick_highlights(syn), synopsis=syn, button_text=o["button"])
     with _SOURCE_LOCK, tempfile.TemporaryDirectory() as tmp:
         _SOURCE.ART_SOURCE = _save_tmp(cover, tmp, "cover.png")
