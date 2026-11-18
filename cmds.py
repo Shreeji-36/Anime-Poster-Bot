@@ -269,7 +269,11 @@ async def generate(client, user_id: int, chat_id: int, *, panel: bool = False, s
             await client.send_chat_action(chat_id, enums.ChatAction.UPLOAD_PHOTO)
         except RPCError:
             pass
-        ud["opts"]["chname"] = await chstore.get_brand(user_id)              # the user's channel branding goes on every poster
+        try:                                                                 # the user's channel branding goes on every poster
+            ud["opts"]["chname"] = await asyncio.wait_for(chstore.get_brand(user_id), timeout=8)
+        except Exception:                                                    # database down / bad MONGO_URI must NOT block posters
+            log.exception("branding lookup failed (is MONGO_URI correct?) -> making the poster without branding")
+            ud["opts"]["chname"] = ""
         t0 = time.monotonic()
         log.info("generate: start style=%s anime=%r", ud.get("style"), ud["anime"].title)
         try:
