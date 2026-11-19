@@ -20,6 +20,7 @@ from PIL import Image, ImageFilter
 
 import chname
 import config
+import themes
 import tmdb
 
 log = logging.getLogger("dataset")
@@ -705,7 +706,8 @@ class _Source(types.SimpleNamespace):
 
 _SOURCE = _Source()
 _SOURCE_LOCK = threading.Lock()                 # the shim is global -> one render at a time for 11/13/14
-_MODULES: dict[int, types.ModuleType] = {}
+_MODULES: dict[tuple[int, str], types.ModuleType] = {}     # (style, theme) -> template module
+_MODULES_MAX = 4                                            # keep RAM small on the free tier: oldest copy is dropped
 
 
 def _place_character_medium(cv, character, cx, bottom, max_w, max_h):
@@ -727,20 +729,29 @@ def _place_character_medium(cv, character, cx, bottom, max_w, max_h):
     cv.paste(ch, (int(cx - ch.width / 2), int(bottom - ch.height)))
 
 
-def _template(n: int) -> types.ModuleType:
-    if n in _MODULES:
-        return _MODULES[n]
+def _template(n: int, theme: str | None = None) -> types.ModuleType:
+    """Template module of style n in the given colour theme (themes.py swaps the accent colours in the source)."""
+    theme = themes.normalize(theme)
+    key = (n, theme)
+    if key in _MODULES:
+        _MODULES[key] = _MODULES.pop(key)            # most recently used goes last
+        return _MODULES[key]
     path = TEMPLATES_DIR / f"poster{n}.py"
     code = path.read_text(encoding="utf-8")
     code = re.sub(r"^\s*import\s+\.source\s*$", "", code, flags=re.M)      # poster11 typo
-    mod = types.ModuleType(f"poster_tpl_{n}")
+    code = themes.recolor_source(n, code, theme)     # "default" = unchanged source
+    mod = types.ModuleType(f"poster_tpl_{n}_{theme}")
     mod.__file__ = str(path)
     mod.source = _SOURCE
     sys.modules[mod.__name__] = mod                  # dataclasses (poster8) look the module up here
     exec(compile(code, str(path), "exec"), mod.__dict__)
     if n in PNG_STYLES and hasattr(mod, "place_character"):
         mod.place_character = _place_character_medium
-    _MODULES[n] = mod
+    _MODULES[key] = mod
+    while len(_MODULES) > _MODULES_MAX:              # drop the oldest copy
+        old_key = next(iter(_MODULES))
+        old = _MODULES.pop(old_key)
+        sys.modules.pop(old.__name__, None)
     return mod
 
 
@@ -926,7 +937,7 @@ def char_state(a: Anime, idx: int) -> tuple[int, str]:
 def _render_1_7(n, a, o):
     if n == 7:
         ensure_assets()
-    mod = _template(n)
+    mod = _template(n, o.get("theme"))
     if n in PNG_STYLES:
         idx = o.get("char", 0)
         art = a.characters[idx][1] if 0 <= idx < len(a.characters) else None  # None -> AniList poster card
@@ -938,7 +949,7 @@ def _render_1_7(n, a, o):
 
 
 def _render_8(n, a, o):
-    mod = _template(n)
+    mod = _template(n, o.get("theme"))
     r = a.raw
     t = r.get("title") or {}
     score = _score(r)
@@ -974,7 +985,7 @@ def _render_8(n, a, o):
 
 def _render_aniraw(n, a, o):
     """poster9 / 10 / 12 take the raw AniList dict + image bytes and return BytesIO"""
-    mod = _template(n)
+    mod = _template(n, o.get("theme"))
     sel = _art_bytes(a, n, o)
     if n == 12:                                           # banner only: it is the background (the template reuses it up front)
         buf = mod.create_poster(a.raw, None, sel)
@@ -987,7 +998,7 @@ def _render_aniraw(n, a, o):
 
 def _render_10(n, a, o):
     """Style 10 = Templates/poster10.py (white + pink half-circle frame); takes a custom button text."""
-    mod = _template(10)
+    mod = _template(10, o.get("theme"))
     buf = mod.create_poster(a.raw, _art_bytes(a, 10, o), None, button_text=o["button"])
     img = Image.open(buf)
     img.load()
@@ -1005,7 +1016,7 @@ def _tags_upper(raw, n=3):
 
 
 def _render_11(n, a, o):
-    mod, r = _template(n), a.raw
+    mod, r = _template(n, o.get("theme")), a.raw
     cover = _pil(_art_bytes(a, n, o)) or Image.new("RGB", (460, 650), (60, 60, 70))
     syn = clean_text(r.get("description"), 250)
     eps = r.get("episodes")
@@ -1027,7 +1038,7 @@ def _render_11(n, a, o):
 
 
 def _render_13(n, a, o):
-    mod, r = _template(n), a.raw
+    mod, r = _template(n, o.get("theme")), a.raw
     cover = _pil(_art_bytes(a, n, o)) or Image.new("RGB", (460, 650), (60, 60, 70))
     syn = clean_text(r.get("description"), 230)
     edges = (r.get("characters") or {}).get("edges") or []
@@ -1059,7 +1070,7 @@ def _render_13(n, a, o):
 
 
 def _render_14(n, a, o):
-    mod, r = _template(n), a.raw
+    mod, r = _template(n, o.get("theme")), a.raw
     cover = _pil(_art_bytes(a, n, o)) or Image.new("RGB", (460, 650), (60, 60, 70))
     syn = clean_text(r.get("description"), 200)
     tf = mod.font("Lora-Italic-Variable.ttf", 76, 700)
@@ -1091,7 +1102,7 @@ _RENDER_SLOTS = asyncio.Semaphore(config.RENDER_WORKERS)
 
 
 def default_options(style_id: int) -> dict:
-    return dict(button=BUTTON_PRESETS[0], brand=(BRAND_TOP, BRAND_BOTTOM), char=0, pic=0)
+    return dict(button=BUTTON_PRESETS[0], brand=(BRAND_TOP, BRAND_BOTTOM), char=0, pic=0, theme=themes.DEFAULT)
 
 
 _BRAND6_LOCK = threading.Lock()          # style 6 gets its header text by swapping a constant of the shared template
@@ -1099,11 +1110,12 @@ _BRAND6_LOCK = threading.Lock()          # style 6 gets its header text by swapp
 
 def _render_sync(style_id: int, a: Anime, opts: dict) -> Rendered:
     o = {**default_options(style_id), **(opts or {})}
+    o["theme"] = themes.normalize(o.get("theme"))        # colour theme chosen in the options panel
     name = chname.clean(o.get("chname"))                 # the user's channel branding - on EVERY poster
     if name and style_id in (8, 13):                     # the template's brand lockup carries it
         o["brand"] = chname.split_brand(name)
     if name and style_id == 6:                           # the template's header text carries it
-        mod = _template(6)
+        mod = _template(6, o["theme"])
         with _BRAND6_LOCK:
             old = mod.BRAND
             mod.BRAND = name.upper()
@@ -1115,7 +1127,7 @@ def _render_sync(style_id: int, a: Anime, opts: dict) -> Rendered:
         img = _RENDERERS[style_id](style_id, a, o)
     img = img.convert("RGB")
     if name and style_id not in chname.OWN_BRAND:        # every other style: written in that poster's own look
-        img = chname.draw_brand(img, name, style_id)
+        img = chname.draw_brand(img, name, style_id, o["theme"])
     jpg, png = io.BytesIO(), io.BytesIO()
     img.save(jpg, "JPEG", quality=93, optimize=True)
     img.save(png, "PNG", optimize=False)
