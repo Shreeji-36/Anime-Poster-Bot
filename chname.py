@@ -6,6 +6,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 import config
+import themes
 
 # emoji / pictographs / variation selectors: a poster font cannot draw them
 _NOISE = re.compile("[\U0001F000-\U0001FFFF\u2600-\u27BF\u2B00-\u2BFF\uFE00-\uFE0F\u200B-\u200F\u202A-\u202E\u2060\U000E0000-\U000E007F]")
@@ -115,7 +116,7 @@ def _run(draw, font, text, x, y, fill, track, measure=False) -> float:
     return x
 
 
-def draw_brand(img: Image.Image, name: str, style_id: int) -> Image.Image:
+def draw_brand(img: Image.Image, name: str, style_id: int, theme: str | None = None) -> Image.Image:
     """Write the branding in this poster's own typography, colours and logo spot. Styles without a spec are left alone."""
     spec = SPECS.get(style_id)
     name = clean(name)
@@ -151,9 +152,12 @@ def draw_brand(img: Image.Image, name: str, style_id: int) -> Image.Image:
     x, y = spec["at"][0] * k, spec["at"][1] * k
     if spec.get("align") == "r":
         x -= total
+    accent = spec["accent"]
+    if style_id != 9:                                    # style 9 imitates the Netflix logo: its red never changes
+        accent = themes.accent_for(style_id, accent, theme)
     x = _run(d, font, a, x, y, spec["ink"] + (255,), track)
     x = _run(d, font, joiner, x, y, spec["ink"] + (255,), track)
-    _run(d, font, b, x, y, spec["accent"] + (255,), track)
+    _run(d, font, b, x, y, accent + (255,), track)
     return Image.alpha_composite(base, layer).convert("RGB")
 
 
