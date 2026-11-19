@@ -17,7 +17,7 @@ _ready = False
 
 
 def _blank() -> dict:
-    return {"channels": [], "brand": ""}
+    return {"channels": [], "brand": "", "theme": ""}
 
 
 async def _init() -> None:
@@ -81,6 +81,11 @@ async def get_brand(uid: int) -> str:
     return (await _get(uid)).get("brand") or ""
 
 
+async def get_theme(uid: int) -> str:
+    """the poster colour the user picked last time ('' = original colours)"""
+    return (await _get(uid)).get("theme") or ""
+
+
 # ---------------------------------------------------------------- writing
 async def add_channel(uid: int, ch: dict) -> None:
     d = await _get(uid)
@@ -101,4 +106,9 @@ async def remove_channel(uid: int, chat_id: int) -> bool:
 
 async def set_brand(uid: int, text: str) -> None:
     (await _get(uid))["brand"] = text
+    await _save(uid)
+
+
+async def set_theme(uid: int, key: str) -> None:
+    (await _get(uid))["theme"] = key
     await _save(uid)
