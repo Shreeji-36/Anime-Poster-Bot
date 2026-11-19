@@ -43,8 +43,8 @@ MENU_IMAGES = [
 ]
 
 # ---------------------------------------------------------------- posters
-BRAND_TOP = _get("BRAND_TOP", "ANI")                        # brand on styles 8 and 13
-BRAND_BOTTOM = _get("BRAND_BOTTOM", "CROX")
+BRAND_TOP = _get("BRAND_TOP", "ANIME")                        # brand on styles 8 and 13
+BRAND_BOTTOM = _get("BRAND_BOTTOM", "GALAXY")
 USE_CHARACTER_PNG = _get("USE_CHARACTER_PNG", "1") != "0"   # styles 1, 2, 4, 5: try transparent fanart.tv PNGs
 USE_ANILIST_CUTOUT = _get("USE_ANILIST_CUTOUT", "0") == "1"  # also offer an AniList character cut-out (rembg). off = fanart.tv only
 FANART_CANDIDATES = _int("FANART_CANDIDATES", 3)            # how many fanart.tv PNGs to offer (styles 1, 2, 4, 5). 15 is far too many for 512 MB RAM
