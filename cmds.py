@@ -18,6 +18,7 @@ from pyrogram.types import BotCommand, InputMediaPhoto
 import chstore
 import config
 import dataset
+import themes
 from dataset import BUTTON_PRESETS, POSTERS
 from ui import BLUE, GREEN, RED, bq, btn, kb, sc
 
@@ -174,10 +175,24 @@ def options_keyboard(style: int, opts: dict, anime=None):
     if s.button:
         rows.append([btn(sc("🔘 button: ") + opts["button"], "obt", raw=True, color=BLUE),
                      btn("✏️ custom", "obc", color=GREEN)])
+    theme = themes.normalize(opts.get("theme"))                     # accent colours of the poster (not the white page)
+    rows.append([btn(sc("🎨 colour: ") + f"{themes.emoji(theme)} {themes.label(theme)}", "thm", raw=True, color=BLUE),
+                 btn("🔀 next", "thn", color=GREEN)])
     brand = opts.get("chname") or ""                                # the user's channel branding: on EVERY poster
     rows.append([btn(sc("🏷 branding: ") + (brand[:22] if brand else sc("not set")), "ch_brand", raw=True, color=BLUE),
                  btn("✏️ edit", "ch_brand", color=GREEN)])
     rows.append([btn("🔙 back", "ob", color=RED)])
+    return kb(*rows)
+
+
+def theme_keyboard(current: str | None):
+    """every colour as a button (3 per row); the active one carries a tick"""
+    current = themes.normalize(current)
+    keys = [themes.DEFAULT] + list(themes.THEMES)
+    cells = [btn(("✅ " if k == current else "") + f"{themes.emoji(k)} {themes.label(k)}", f"th:{k}", raw=True,
+                 color=GREEN if k == current else BLUE) for k in keys]
+    rows = [cells[i:i + 3] for i in range(0, len(cells), 3)]
+    rows.append([btn("🔙 back", "op", color=RED)])
     return kb(*rows)
 
 
@@ -219,6 +234,9 @@ def _caption(ud: dict, rendered) -> str:
         kind = dataset.art_kind(ud["style"])
         _, label, _, _ = dataset.art_state(a, ud["style"], ud["opts"].get("pic"))
         cap += "\n" + sc(f"🖼 {kind}: ") + html.escape(label) + "\n" + sc(f"⚙ options → ◀ ▶ to change the {kind}")
+    theme = themes.normalize(ud["opts"].get("theme"))
+    if theme != themes.DEFAULT:
+        cap += "\n" + sc("🎨 colour: ") + f"{themes.emoji(theme)} {themes.label(theme)}"
     if ud["opts"].get("chname"):
         cap += "\n" + sc("🏷 branding: ") + html.escape(ud["opts"]["chname"])
     return bq(cap)
@@ -290,6 +308,11 @@ async def generate(client, user_id: int, chat_id: int, *, panel: bool = False, s
         except Exception:                                                    # database down / bad MONGO_URI must NOT block posters
             log.exception("branding lookup failed (is MONGO_URI correct?) -> making the poster without branding")
             ud["opts"]["chname"] = ""
+        if "theme" not in ud["opts"]:                                        # first poster of this session: the colour used last time
+            try:
+                ud["opts"]["theme"] = themes.normalize(await asyncio.wait_for(chstore.get_theme(user_id), timeout=8))
+            except Exception:
+                ud["opts"]["theme"] = themes.DEFAULT
         t0 = time.monotonic()
         log.info("generate: start style=%s anime=%r", ud.get("style"), ud["anime"].title)
         try:
@@ -693,6 +716,22 @@ async def on_button(client, cq):
     elif data == "ob":
         await cq.answer()
         await msg.edit_reply_markup(result_keyboard(style))
+    elif data == "thm":                                             # open the colour picker
+        await cq.answer()
+        await msg.edit_reply_markup(theme_keyboard(opts.get("theme")))
+    elif data.startswith("th:") or data == "thn":                   # a colour was chosen / 🔀 next colour
+        key = themes.next_key(opts.get("theme")) if data == "thn" else themes.normalize(data[3:])
+        if data != "thn" and key == themes.normalize(opts.get("theme")):
+            await cq.answer(sc("already using this colour"))
+            await msg.edit_reply_markup(options_keyboard(style, opts, ud["anime"]))
+            return
+        await cq.answer(sc(f"{themes.label(key)} · rendering…"))
+        opts["theme"] = key
+        try:                                                        # remember it for next time (Mongo / json)
+            await asyncio.wait_for(chstore.set_theme(uid, key), timeout=8)
+        except Exception:
+            log.warning("could not save the colour choice", exc_info=True)
+        await generate(client, uid, cid, panel=True, source_msg=msg)
     elif data in ("ipp", "ipn"):                                    # poster / banner: back / next
         kind = dataset.art_kind(style)
         await dataset.list_art(ud["anime"], kind)                   # first tap: look up the other posters / banners
