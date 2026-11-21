@@ -71,7 +71,7 @@ SPECS: dict[int, dict] = {
     10: dict(font="Anton-Regular.ttf", size=46, track=3.0, case="upper", at=(1860, 62), align="r", ink=(14, 18, 58), accent=(240, 72, 120), maxw=380, ref=1920),
     11: dict(font="Poppins-Bold.ttf", size=26, track=2.0, case="upper", at=(126, 43), ink=(42, 43, 56), accent=(232, 32, 63), maxw=500, ref=1280),
     12: dict(font="Kanit-ExtraBold.ttf", size=44, track=3.0, case="upper", at=(72, 78), ink=(255, 255, 255), accent=(150, 120, 255), maxw=700, ref=1920),
-    14: dict(font="Lora-Italic-Variable.ttf", size=34, track=0.6, case="keep", at=(640, 668), ink=(17, 55, 69), accent=(178, 96, 70), maxw=420, ref=1280),
+    14: dict(font="Poppins-Bold.ttf", size=34, track=0.6, case="keep", at=(640, 668), ink=(17, 55, 69), accent=(178, 96, 70), maxw=420, ref=1280),
 }
 OWN_BRAND = (6, 8, 13)           # these three draw the branding themselves (template header / lockup)
 
