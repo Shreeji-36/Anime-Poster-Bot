@@ -1073,7 +1073,7 @@ def _render_14(n, a, o):
     mod, r = _template(n, o.get("theme")), a.raw
     cover = _pil(_art_bytes(a, n, o)) or Image.new("RGB", (460, 650), (60, 60, 70))
     syn = clean_text(r.get("description"), 200)
-    tf = mod.font("Lora-Italic-Variable.ttf", 76, 700)
+    tf = mod.font("Poppins-Bold.ttf", 76)
     title_lines = wrap_to_width(a.title, lambda t: tf.getlength(t) / mod.S, 580, 3)
     anime = dict(title_lines=title_lines, tags=_tags_upper(r, 3) or [_word(a)],
                  highlight_words=pick_highlights(syn), synopsis=syn, button_text=o["button"])
