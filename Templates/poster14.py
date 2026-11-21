@@ -172,7 +172,7 @@ def gradient_pill(img, box, c1, c2):
 
 def draw_content(img, d, a, cy):
     """Title, chips, synopsis box and button, stacked and centred on the art."""
-    tf = font("Poppins-Bold.ttf", 76)
+    tf = font("Lora-Italic-Variable.ttf", 76, 700)
     cf = font("Poppins-Bold.ttf", 12.5)
     rf, mf = font("Poppins-Regular.ttf", 14.5), font("Poppins-Medium.ttf", 14.5)
     pad, lh = 18, 24
