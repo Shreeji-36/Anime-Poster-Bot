@@ -72,6 +72,9 @@ HELP_CMDS = [
     ("/addchnl", "add your channel (i must be full admin there)"),
     ("/mychnls", "your channels"),
     ("/removechnl", "remove a channel"),
+    ("/schedules", "your scheduled posts"),
+    ("/template", "your caption template ({title}, {score} ...)"),
+    ("/timezone", "set your time zone for scheduling"),
 ]
 
 
@@ -154,7 +157,7 @@ def result_keyboard(style: int):
          btn(POSTER_NEXT, "nx", raw=True, color=BLUE)],
         [btn("⚙️ options", "op", color=BLUE), btn("🔄 redo", "rg", color=GREEN)],
         [btn("📁 full quality file", "fl", color=BLUE), btn("🔍 new title", "na", color=GREEN)],
-        [btn("📣 post to channel", "ch_post", color=GREEN)],
+        [btn("📣 post to channel", "ch_post", color=GREEN), btn("⏰ schedule", "ap_new", color=BLUE)],
     )
 
 
@@ -790,6 +793,9 @@ async def post_start(app):
         BotCommand("addchnl", "Add your channel (I must be full admin)"),
         BotCommand("mychnls", "Your channels"),
         BotCommand("removechnl", "Remove a channel"),
+        BotCommand("schedules", "Your scheduled posts"),
+        BotCommand("template", "Your caption template"),
+        BotCommand("timezone", "Set your time zone"),
     ])
 
 
