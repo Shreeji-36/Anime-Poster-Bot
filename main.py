@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pyrogram import Client, enums, idle
 
 import config   # first: it prepares the environment the templates read
+import autopost
 import chnl
 import cmds
 import dataset
@@ -57,11 +58,14 @@ async def amain():
     app = Client("poster-bot", api_id=config.API_ID, api_hash=config.API_HASH, bot_token=config.BOT_TOKEN,
                  in_memory=True, parse_mode=enums.ParseMode.HTML, workers=4)   # 16 parallel updates = too much RAM on 512 MB
     chnl.register(app)       # before cmds: while a flow waits for text, these handlers must see it first
+    autopost.register(app)   # also before cmds (scheduled posts + caption templates)
     cmds.register(app)
     await app.start()
     await cmds.post_start(app)
+    autopost.start(app)      # background loop that sends the scheduled posts (+ keep-alive ping)
     log.info("bot started - %d poster styles", len(dataset.POSTERS))
     await idle()
+    await autopost.stop()
     await app.stop()
 
 
