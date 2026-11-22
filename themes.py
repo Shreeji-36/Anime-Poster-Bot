@@ -14,10 +14,17 @@ so the poster keeps its design - only the coloured shapes, buttons and highlight
 It runs while the template is loaded (a text replace + exec), so there is NO extra image processing and NO extra
 RAM while rendering: safe for the Render free tier.
 
+Colour menu
+-----------
+Colour button  ->  two buttons: 🌑 Dark colours / 🌸 Soft colours  ->  a 3 x 3 grid of colours each.
+A theme belongs to a group by its `group` field ("dark" or "soft"); the grids are built from THEMES automatically.
+
 Add a colour
 ------------
-Add one line to THEMES below, e.g.  "gold": Theme("Gold", "🟡", hue=45, sat=1.0, light=0.85)   and it shows up in
-the bot automatically.
+Add one line to THEMES below, e.g.
+    "ocean": Theme("Ocean", "🌊", hue=200, sat=0.85, light=0.60, group="dark", tint=0.5, deep=0.55)
+    "mist":  Theme("Mist",  "☁️", hue=210, sat=0.40, lift=0.12, group="soft", tint=0.7)
+It shows up in its group's grid (3 per row, so keep 9 / 12 / 15 per group to fill the rows).
 """
 from __future__ import annotations
 
@@ -35,13 +42,37 @@ class Theme(NamedTuple):
     label: str
     emoji: str
     hue: float | None = None      # target hue in degrees (None = grey scale, only used by "black")
-    sat: float = 1.0              # saturation multiplier
-    light: float = 1.0            # lightness multiplier (< 1 = darker)
+    sat: float = 1.0              # saturation multiplier of the strong accent colours
+    light: float = 1.0            # lightness multiplier of the strong accents (< 1 = darker)
+    group: str = ""               # "dark" | "soft" -> shown in that grid.  "" = an old colour: still works, has no button
+    lift: float = 0.0             # soft colours: lightness ADDED to the strong accents (pastel look)
+    tint: float = 1.0             # group colours: saturation of the pale tints (big blobs / panels)
+    deep: float = 0.0             # dark colours: how much darker the big pastel blobs become (the lightest panels that carry text stay pale)
 
 
 # order = order of the buttons in the bot.  "default" = the original colours of every style.
 THEMES: dict[str, Theme] = {
-    "black":  Theme("Black",  "⚫"),
+    # ------------------------------------------------------------------ 🌑 dark colours
+    "black":    Theme("Black",     "⚫", group="dark"),
+    "navy":     Theme("Navy",      "🔵", hue=222, sat=0.85, light=0.62, group="dark", tint=0.5, deep=0.55),
+    "forest":   Theme("Forest",    "🟢", hue=145, sat=0.70, light=0.58, group="dark", tint=0.4, deep=0.55),
+    "brown":    Theme("Brown",     "🟤", hue=25,  sat=0.62, light=0.55, group="dark", tint=0.45, deep=0.55),
+    "maroon":   Theme("Maroon",    "🔴", hue=352, sat=0.85, light=0.62, group="dark", tint=0.45, deep=0.55),
+    "purple":   Theme("Purple",    "🟣", hue=272, sat=0.80, light=0.62, group="dark", tint=0.5, deep=0.55),
+    "deepteal": Theme("Deep Teal", "🩵", hue=182, sat=0.85, light=0.55, group="dark", tint=0.45, deep=0.55),
+    "plum":     Theme("Plum",      "🍇", hue=318, sat=0.75, light=0.58, group="dark", tint=0.5, deep=0.55),
+    "olive":    Theme("Olive",     "🫒", hue=75,  sat=0.65, light=0.55, group="dark", tint=0.4, deep=0.55),
+    # ------------------------------------------------------------------ 🌸 soft colours
+    "lavender": Theme("Lavender",  "💜", hue=262, sat=0.50, lift=0.13, group="soft", tint=0.85),
+    "lilac":    Theme("Lilac",     "🔮", hue=292, sat=0.50, lift=0.13, group="soft", tint=0.85),
+    "softpink": Theme("Soft Pink", "🩷", hue=338, sat=0.60, lift=0.14, group="soft", tint=0.90),
+    "peach":    Theme("Peach",     "🍑", hue=18,  sat=0.70, lift=0.14, group="soft", tint=0.90),
+    "sand":     Theme("Sand",      "🌾", hue=38,  sat=0.45, lift=0.10, group="soft", tint=0.80),
+    "mint":     Theme("Mint",      "🍃", hue=150, sat=0.45, lift=0.10, group="soft", tint=0.80),
+    "sage":     Theme("Sage",      "🌿", hue=105, sat=0.28, lift=0.08, group="soft", tint=0.60),
+    "softteal": Theme("Soft Teal", "🐬", hue=180, sat=0.45, lift=0.06, group="soft", tint=0.75),
+    "sky":      Theme("Sky Blue",  "☁️", hue=205, sat=0.60, lift=0.13, group="soft", tint=0.85),
+    # ------------------------------------------------------------------ old colours (no button any more, but a saved choice still renders)
     "blue":   Theme("Blue",   "🔵", hue=218, sat=1.00, light=1.00),
     "red":    Theme("Red",    "🔴", hue=355, sat=1.00, light=1.00),
     "violet": Theme("Violet", "🟣", hue=268, sat=0.95, light=1.00),
@@ -51,6 +82,7 @@ THEMES: dict[str, Theme] = {
     "teal":   Theme("Teal",   "🩵", hue=182, sat=0.90, light=0.80),
 }
 DEFAULT_LABEL = ("Original", "🎨")
+GROUPS: dict[str, tuple[str, str]] = {"dark": ("🌑", "Dark colours"), "soft": ("🌸", "Soft colours")}
 
 DARK_STYLES = {8, 9, 12, 13}      # dark-background styles: "black" turns into silver there (black on black is invisible)
 
@@ -70,14 +102,23 @@ def emoji(key: str | None) -> str:
     return DEFAULT_LABEL[1] if key == DEFAULT else THEMES[key].emoji
 
 
-def next_key(key: str | None) -> str:
-    """original -> black -> blue -> ... -> teal -> original"""
-    order = [DEFAULT] + list(THEMES)
-    return order[(order.index(normalize(key)) + 1) % len(order)]
+def group_of(key: str | None) -> str:
+    """'dark' | 'soft' | '' (original colours or an old colour)"""
+    key = normalize(key)
+    return "" if key == DEFAULT else THEMES[key].group
+
+
+def keys_in(group: str) -> list[str]:
+    """the colours of one grid, in button order"""
+    return [k for k, t in THEMES.items() if t.group == group]
 
 
 # ----------------------------------------------------------------------------------------------- colour maths
 RGB = tuple
+
+
+_WHITE = (255, 255, 255)
+SOFT_MIN_CONTRAST = 2.6           # white on a soft accent colour (WCAG-like ratio; the originals are 2.8 - 5.8)
 
 
 def _smooth(a: float, b: float, x: float) -> float:
@@ -123,12 +164,36 @@ def recolor_rgb(rgb: RGB, theme_key: str, style_id: int, ref_hue: float | None =
         else:                                                   # light poster: accent -> charcoal, tint -> light grey
             accent, tint = 0.10 + 0.22 * l, l
         v = tint + (accent - tint) * w
+        if style_id not in DARK_STYLES:                         # the big pastel blobs turn dark grey, the text panels stay pale
+            if tuple(rgb[:3]) not in KEEP_PALE.get(style_id, ()):
+                v -= 0.52 * (1.0 - _smooth(0.930, 0.940, l)) * (1.0 - w) * _smooth(0.55, 0.75, l)
         return _to_rgb(v, v, v)
 
     new_h = t.hue / 360
     if ref_hue is not None:                                     # keep a little of the original gradient / 2nd accent
         d = ((h * 360 - ref_hue + 180) % 360) - 180
         new_h = ((t.hue + max(-40.0, min(40.0, d)) * 0.6) % 360) / 360
+
+    if t.group:                                                 # ---- dark / soft colours
+        wa = 1.0 - _smooth(0.70, 0.90, l)                       # 1 = strong accent colour, 0 = pale tint (blob, panel)
+        up = t.lift * _smooth(0.20, 0.45, l) * (1.0 - _smooth(0.62, 0.80, l))      # soft: lift the accents, but not the ones that are light already
+        if style_id in DARK_STYLES:                             # dark poster: an accent must stay visible on it
+            acc_l = l + up if t.group == "soft" else l
+        else:                                                   # light poster (white text sits on many accents: never get too pale)
+            acc_l = min(l * t.light + up, max(l, 0.66))
+        new_l = l + (acc_l - l) * wa                            # pale tints keep their lightness: text on them stays readable
+        if t.group == "soft" and style_id not in DARK_STYLES and wa > 0.5:
+            # white button text / icons sit on many accents: a pastel must not get paler than the text can bear
+            need = min(SOFT_MIN_CONTRAST, _contrast(_WHITE, tuple(rgb[:3])))
+            new_s_acc = s_hls * t.sat
+            while new_l > 0.30 and _contrast(_WHITE, _to_rgb(*colorsys.hls_to_rgb(new_h, new_l, new_s_acc))) < need:
+                new_l -= 0.01
+        if t.deep and style_id not in DARK_STYLES and tuple(rgb[:3]) not in KEEP_PALE.get(style_id, ()):
+            # dark colours: the big pastel blobs get darker too, but the lightest panels / chips (they carry text) stay pale
+            new_l -= t.deep * (1.0 - _smooth(0.930, 0.940, l)) * (1.0 - wa) * _smooth(0.55, 0.75, l)
+        new_s = s_hls * (t.tint + (t.sat - t.tint) * wa)
+        return _to_rgb(*colorsys.hls_to_rgb(new_h, _clamp01(new_l), _clamp01(new_s)))
+
     return _to_rgb(*colorsys.hls_to_rgb(new_h, _clamp01(l * t.light), _clamp01(s_hls * t.sat)))
 
 
@@ -154,6 +219,11 @@ STYLE_COLORS: dict[int, list[RGB]] = {
     13: [(240, 112, 24), (222, 92, 14), (255, 138, 38), (92, 70, 52), (244, 190, 150)],
     14: [(178, 96, 70), (248, 221, 211), (17, 55, 69), (104, 128, 118), (196, 150, 112), (206, 134, 96),
          (166, 88, 64), (252, 238, 231), (238, 208, 196), (98, 118, 108), (253, 243, 238), (30, 60, 72)],
+}
+
+# Pale colours that carry TEXT (tag chips ...): the dark colours must not darken these, or the dark text on them gets hard to read.
+KEEP_PALE: dict[int, set[RGB]] = {
+    10: {(222, 230, 255), (232, 236, 247), (212, 218, 236), (196, 208, 240), (184, 196, 232), (214, 220, 240)},
 }
 
 # Text / icons that are drawn ON an accent fill.  They are white (or dark) in the original, which becomes unreadable
