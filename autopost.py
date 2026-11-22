@@ -34,7 +34,7 @@ import chstore
 import cmds
 import config
 import dataset
-from ui import BLUE, GREEN, RED, bq, btn, kb, sc
+from ui import BLUE, GREEN, NO_PREVIEW, RED, bq, btn, kb, sc
 
 log = logging.getLogger("autopost")
 
@@ -219,7 +219,7 @@ async def send_html(client, chat_id: int, jpg: bytes, text_html: str, markup) ->
     async def go(t: str):
         if t and _plain_len(t) > chnl.CAPTION_MAX:             # too long for a caption: photo first, text after it
             return [await client.send_photo(chat_id, cmds._bio(jpg, "poster.jpg")),
-                    await client.send_message(chat_id, t, parse_mode=HTML, reply_markup=markup, disable_web_page_preview=True)]
+                    await client.send_message(chat_id, t, parse_mode=HTML, reply_markup=markup, **NO_PREVIEW)]
         return [await client.send_photo(chat_id, cmds._bio(jpg, "poster.jpg"), caption=t or None, parse_mode=HTML,
                                         reply_markup=markup)]
     try:
@@ -233,9 +233,9 @@ async def send_html(client, chat_id: int, jpg: bytes, text_html: str, markup) ->
 async def _html_to_entities(client, cid: int, h: str):
     """html -> (text, entities) the way chnl.py keeps them: a temporary message is sent to the user and read back"""
     try:
-        m = await client.send_message(cid, h, parse_mode=HTML, disable_web_page_preview=True)
+        m = await client.send_message(cid, h, parse_mode=HTML, **NO_PREVIEW)
     except RPCError:
-        m = await client.send_message(cid, _no_emoji(h), parse_mode=HTML, disable_web_page_preview=True)
+        m = await client.send_message(cid, _no_emoji(h), parse_mode=HTML, **NO_PREVIEW)
     text, ents = m.text or "", (list(m.entities) if m.entities else None)
     await cmds._safe_delete(client, cid, m.id)
     return text, ents
@@ -472,7 +472,7 @@ async def cmd_template(client, message):
         log.exception("reading the template failed")
         await message.reply_text(bq(sc("⚠️ i couldn't read your template (database problem?).")))
         return
-    await message.reply_text(text, reply_markup=markup, disable_web_page_preview=True)
+    await message.reply_text(text, reply_markup=markup, **NO_PREVIEW)
 
 
 async def _preview_template(client, uid: int, cid: int, tpl: dict) -> bool:
@@ -480,7 +480,7 @@ async def _preview_template(client, uid: int, cid: int, tpl: dict) -> bool:
     a = _ud(uid).get("anime")
     values = fields(a) if a is not None else SAMPLE
     try:
-        await client.send_message(cid, fill(tpl["html"], values), parse_mode=HTML, disable_web_page_preview=True,
+        await client.send_message(cid, fill(tpl["html"], values), parse_mode=HTML, **NO_PREVIEW,
                                   reply_markup=chnl.to_markup(tpl.get("rows")))
     except RPCError as e:
         await client.send_message(cid, bq(sc("⚠️ telegram refused that text / buttons: ") + html.escape(str(e)[:150])))
@@ -745,7 +745,7 @@ async def on_cb(client, cq):
     elif cmd == "ap_tview":
         await cq.answer()
         text, markup = await _tpl_view(uid)
-        await client.send_message(cid, text, reply_markup=markup, disable_web_page_preview=True)
+        await client.send_message(cid, text, reply_markup=markup, **NO_PREVIEW)
 
     elif cmd == "ap_tset":
         await cq.answer()
@@ -911,10 +911,24 @@ def _mode_filter(*modes):
     return filters.create(lambda _, __, m: bool(m.from_user) and cmds.STATE[m.from_user.id].get("await") in modes)
 
 
+def _safe(func):
+    """a command that crashes is written to the log WITH the reason and the user gets a short message (no silence)"""
+    async def wrapper(client, message):
+        try:
+            await func(client, message)
+        except Exception as e:
+            log.exception("/%s failed", func.__name__.removeprefix("cmd_"))
+            try:
+                await message.reply_text(bq(sc("⚠️ something went wrong: ") + html.escape(f"{type(e).__name__}: {str(e)[:120]}")))
+            except Exception:
+                pass
+    return wrapper
+
+
 def register(app):
     """call BEFORE cmds.register() (same reason as chnl.register)"""
-    app.add_handler(MessageHandler(cmd_schedules, filters.command("schedules") & filters.private))
-    app.add_handler(MessageHandler(cmd_template, filters.command("template") & filters.private))
-    app.add_handler(MessageHandler(cmd_timezone, filters.command("timezone") & filters.private))
+    app.add_handler(MessageHandler(_safe(cmd_schedules), filters.command("schedules") & filters.private))
+    app.add_handler(MessageHandler(_safe(cmd_template), filters.command("template") & filters.private))
+    app.add_handler(MessageHandler(_safe(cmd_timezone), filters.command("timezone") & filters.private))
     app.add_handler(MessageHandler(on_mode_text, filters.private & filters.create(cmds._not_command) & _mode_filter(*MODES)))
     app.add_handler(CallbackQueryHandler(on_cb, filters.regex(r"^ap_")))
