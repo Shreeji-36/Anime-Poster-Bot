@@ -86,6 +86,20 @@ GROUPS: dict[str, tuple[str, str]] = {"dark": ("🌑", "Dark colours"), "soft": 
 
 DARK_STYLES = {8, 9, 12, 13}      # dark-background styles: "black" turns into silver there (black on black is invisible)
 
+# ---------------------------------------------------------------------------------------------------------------
+# TUNING KNOBS for the 🌑 dark colours on the light posters (styles 1-7, 10, 11, 14).
+# The dark colours used to be so dark that the small designs drawn on top of the big dark shapes (stars, dots,
+# swoosh lines, outlined squares) disappeared. These two numbers set how light the dark shade is - change them
+# if you want it a bit darker or a bit lighter, nothing else has to be touched.
+#
+#   DARK_ACCENT_BOOST  lightness of the dark accents (buttons, circles, bands).  1.0 = the old, very dark look
+#                      1.3 = default (dark but the designs show)   1.5 = clearly lighter
+#   DARK_BLOB_KEEP     how dark the BIG shapes behind the poster get.  1.0 = old (almost black)
+#                      0.62 = default (dark grey / dark colour)   0.4 = lighter    0.0 = stay pale
+# ---------------------------------------------------------------------------------------------------------------
+DARK_ACCENT_BOOST = 1.30
+DARK_BLOB_KEEP = 0.62
+
 
 def normalize(key: str | None) -> str:
     key = (key or "").strip().lower()
@@ -147,6 +161,17 @@ def _contrast(a: RGB, b: RGB) -> float:
     return (la + 0.05) / (lb + 0.05)
 
 
+# Pale colours that are used for TEXT (not for a shape): they keep the full, dark shade so the words stay readable.
+TEXT_TINTS: dict[int, set[RGB]] = {
+    1: {(255, 202, 202)},                       # the pale second title word "KISS" of style 1
+}
+
+
+def _blob_keep(style_id: int, rgb: RGB) -> float:
+    """1.0 = darken fully (text colours), DARK_BLOB_KEEP = the big shapes (lighter, so the designs on them show)."""
+    return 1.0 if tuple(rgb[:3]) in TEXT_TINTS.get(style_id, ()) else DARK_BLOB_KEEP
+
+
 def recolor_rgb(rgb: RGB, theme_key: str, style_id: int, ref_hue: float | None = None) -> RGB:
     """One colour of one style -> the same colour in the theme (alpha is handled by the caller)."""
     theme_key = normalize(theme_key)
@@ -162,11 +187,11 @@ def recolor_rgb(rgb: RGB, theme_key: str, style_id: int, ref_hue: float | None =
         if style_id in DARK_STYLES:                             # dark poster: accent -> silver, tint -> soft grey
             accent, tint = 0.58 + 0.38 * l, 0.30 + 0.45 * l
         else:                                                   # light poster: accent -> charcoal, tint -> light grey
-            accent, tint = 0.10 + 0.22 * l, l
+            accent, tint = (0.10 + 0.22 * l) * DARK_ACCENT_BOOST, l             # charcoal, a little lighter than before
         v = tint + (accent - tint) * w
-        if style_id not in DARK_STYLES:                         # the big pastel blobs turn dark grey, the text panels stay pale
+        if style_id not in DARK_STYLES:                         # the big pastel blobs turn mid-dark grey, the text panels stay pale
             if tuple(rgb[:3]) not in KEEP_PALE.get(style_id, ()):
-                v -= 0.52 * (1.0 - _smooth(0.930, 0.940, l)) * (1.0 - w) * _smooth(0.55, 0.75, l)
+                v -= 0.52 * _blob_keep(style_id, rgb) * (1.0 - _smooth(0.930, 0.940, l)) * (1.0 - w) * _smooth(0.55, 0.75, l)
         return _to_rgb(v, v, v)
 
     new_h = t.hue / 360
@@ -180,7 +205,8 @@ def recolor_rgb(rgb: RGB, theme_key: str, style_id: int, ref_hue: float | None =
         if style_id in DARK_STYLES:                             # dark poster: an accent must stay visible on it
             acc_l = l + up if t.group == "soft" else l
         else:                                                   # light poster (white text sits on many accents: never get too pale)
-            acc_l = min(l * t.light + up, max(l, 0.66))
+            light = min(1.0, t.light * DARK_ACCENT_BOOST) if t.group == "dark" else t.light     # dark colours: a little lighter
+            acc_l = min(l * light + up, max(l, 0.66))
         new_l = l + (acc_l - l) * wa                            # pale tints keep their lightness: text on them stays readable
         if t.group == "soft" and style_id not in DARK_STYLES and wa > 0.5:
             # white button text / icons sit on many accents: a pastel must not get paler than the text can bear
@@ -190,7 +216,7 @@ def recolor_rgb(rgb: RGB, theme_key: str, style_id: int, ref_hue: float | None =
                 new_l -= 0.01
         if t.deep and style_id not in DARK_STYLES and tuple(rgb[:3]) not in KEEP_PALE.get(style_id, ()):
             # dark colours: the big pastel blobs get darker too, but the lightest panels / chips (they carry text) stay pale
-            new_l -= t.deep * (1.0 - _smooth(0.930, 0.940, l)) * (1.0 - wa) * _smooth(0.55, 0.75, l)
+            new_l -= t.deep * _blob_keep(style_id, rgb) * (1.0 - _smooth(0.930, 0.940, l)) * (1.0 - wa) * _smooth(0.55, 0.75, l)
         new_s = s_hls * (t.tint + (t.sat - t.tint) * wa)
         return _to_rgb(*colorsys.hls_to_rgb(new_h, _clamp01(new_l), _clamp01(new_s)))
 
