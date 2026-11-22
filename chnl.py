@@ -397,13 +397,19 @@ async def _ask_text(client, uid: int, cid: int) -> None:
     pf = ud["pf"]
     ud["await"] = "ptext"
     ch = await chstore.get_channel(uid, pf["chat_id"])
+    row = [btn("⏭ no text", "ch_skiptext", color=BLUE)]
+    try:                                                         # a saved caption template (/template) -> one tap
+        if await chstore.get_template(uid):
+            row.append(btn("📝 use template", "ap_usetpl", color=GREEN))
+    except Exception:
+        pass
     await client.send_message(
         cid,
         bq(_post_head(ud, ch) + "\n\n" +
            sc("✍️ now send the post text.\n"
               "bold, italic, underline, strike, spoiler, code, links, quotes, expandable quotes, any unicode font - "
               "everything you format in telegram stays exactly as you send it.")),
-        reply_markup=_cancel_kb([btn("⏭ no text", "ch_skiptext", color=BLUE)]))
+        reply_markup=_cancel_kb(row))
 
 
 async def _ask_buttons(client, uid: int, cid: int) -> None:
