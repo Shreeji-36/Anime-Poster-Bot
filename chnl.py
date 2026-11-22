@@ -31,7 +31,7 @@ import chname
 import chstore
 import cmds
 import config
-from ui import BLUE, GREEN, RED, bq, btn, kb, sc
+from ui import BLUE, GREEN, NO_PREVIEW, RED, bq, btn, kb, sc
 
 log = logging.getLogger("chnl")
 
@@ -199,7 +199,7 @@ async def publish(client, chat_id: int, jpg: bytes, text: str, ents, markup) -> 
         if t and len(t) > CAPTION_MAX:
             out.append(await client.send_photo(chat_id, cmds._bio(jpg, "poster.jpg")))
             out.append(await client.send_message(chat_id, t, entities=e, parse_mode=enums.ParseMode.DISABLED,
-                                                 reply_markup=markup, disable_web_page_preview=True))
+                                                 reply_markup=markup, **NO_PREVIEW))
         else:
             out.append(await client.send_photo(chat_id, cmds._bio(jpg, "poster.jpg"), caption=t or None,
                                                caption_entities=e, parse_mode=enums.ParseMode.DISABLED,
