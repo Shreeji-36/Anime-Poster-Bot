@@ -21,6 +21,27 @@ def sc(text: str) -> str:
     return "".join(p if i % 2 else p.lower().translate(_SC) for i, p in enumerate(_TAGS.split(text)))
 
 
+def _no_preview() -> dict:
+    """Keyword arguments that switch the link preview off.
+
+    Kurigram 2.2 REMOVED disable_web_page_preview (calling it raises TypeError, so the command silently does nothing)
+    and uses link_preview_options instead; older builds only know the old name. Ask the installed library."""
+    try:
+        from pyrogram import Client
+        params = inspect.signature(Client.send_message).parameters
+        if "link_preview_options" in params:
+            from pyrogram.types import LinkPreviewOptions
+            return {"link_preview_options": LinkPreviewOptions(is_disabled=True)}
+        if "disable_web_page_preview" in params:
+            return {"disable_web_page_preview": True}
+    except Exception:
+        pass
+    return {}
+
+
+NO_PREVIEW = _no_preview()          # use:  await client.send_message(chat, text, **NO_PREVIEW)
+
+
 def bq(text: str, expandable: bool = False) -> str:
     return f"<blockquote{' expandable' if expandable else ''}>{text}</blockquote>"
 
