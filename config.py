@@ -87,6 +87,13 @@ _DEFAULT_RIGHTS = ("can_manage_chat", "can_post_messages", "can_edit_messages", 
                    "can_invite_users", "can_change_info", "can_manage_video_chats", "can_promote_members")
 CHANNEL_RIGHTS = tuple(x for x in re.split(r"[,\s]+", _get("CHANNEL_REQUIRED_RIGHTS")) if x) or _DEFAULT_RIGHTS
 
+# ---------------------------------------------------------------- scheduled posts + caption templates (autopost.py)
+TIMEZONE = _get("TIMEZONE", "UTC")                          # default time zone for /schedules times (users change it with /timezone)
+MAX_SCHEDULES = _int("MAX_SCHEDULES", 10)                   # pending scheduled posts one user may have
+SCHEDULE_GRACE_HOURS = _int("SCHEDULE_GRACE_HOURS", 12)     # a post that is this late (Render was asleep / restarting) is skipped
+KEEPALIVE = _get("KEEPALIVE", "1") != "0"                   # ping our own Render URL every 10 min so the free service does not sleep
+RENDER_EXTERNAL_URL = _get("RENDER_EXTERNAL_URL")           # Render sets this one by itself
+
 # ---------------------------------------------------------------- server / logging
 PORT = _int("PORT", 0)                                      # >0 starts a tiny health-check server
 LOG_LEVEL = _get("LOG_LEVEL", "INFO")
