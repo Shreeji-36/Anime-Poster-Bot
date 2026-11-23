@@ -20,7 +20,9 @@ _ready = False
 
 
 def _blank() -> dict:
-    return {"channels": [], "brand": "", "theme": "", "tpl": None, "tz": ""}
+    # "kinds" = the /settings of each type: {"movie": {"brand", "tpl", "style", "theme", "button"}, "tv": {...}, "anime": {...}}
+    # a key that is missing in a type means "use the default" (the global brand / theme / template of the old commands)
+    return {"channels": [], "brand": "", "theme": "", "tpl": None, "tz": "", "kinds": {}}
 
 
 async def _init() -> None:
@@ -95,13 +97,44 @@ async def get_channel(uid: int, chat_id: int) -> dict | None:
     return next((c for c in await channels(uid) if c["id"] == chat_id), None)
 
 
-async def get_brand(uid: int) -> str:
-    return (await _get(uid)).get("brand") or ""
+def _kd(d: dict, kind: str | None) -> dict:
+    return (d.get("kinds") or {}).get(kind) or {} if kind else {}
 
 
-async def get_theme(uid: int) -> str:
-    """the poster colour the user picked last time ('' = original colours)"""
-    return (await _get(uid)).get("theme") or ""
+async def get_kind(uid: int, kind: str) -> dict:
+    """the /settings of one type ('movie' | 'tv' | 'anime') - a copy, {} when nothing was set"""
+    return dict(_kd(await _get(uid), kind))
+
+
+async def set_kind(uid: int, kind: str, key: str, value) -> None:
+    """save one /settings value of a type; value None = forget it (the default is used again)"""
+    d = await _get(uid)
+    kinds = d.setdefault("kinds", {})
+    kd = kinds.setdefault(kind, {})
+    if value is None:
+        kd.pop(key, None)
+    else:
+        kd[key] = value
+    await _save(uid)
+
+
+async def get_brand(uid: int, kind: str | None = None) -> str:
+    """the watermark text of a poster. With a kind: that type's own text if it has one ('' = none on purpose),
+    otherwise the default one"""
+    d = await _get(uid)
+    kd = _kd(d, kind)
+    if "brand" in kd:
+        return kd["brand"] or ""
+    return d.get("brand") or ""
+
+
+async def get_theme(uid: int, kind: str | None = None) -> str:
+    """the poster colour ('' = original colours); a type's own colour first, then the one used last time"""
+    d = await _get(uid)
+    kd = _kd(d, kind)
+    if "theme" in kd:
+        return kd["theme"] or ""
+    return d.get("theme") or ""
 
 
 # ---------------------------------------------------------------- writing
@@ -122,24 +155,35 @@ async def remove_channel(uid: int, chat_id: int) -> bool:
     return True
 
 
-async def set_brand(uid: int, text: str) -> None:
+async def set_brand(uid: int, text: str, kind: str | None = None) -> None:
+    if kind:
+        await set_kind(uid, kind, "brand", text)
+        return
     (await _get(uid))["brand"] = text
     await _save(uid)
 
 
-async def set_theme(uid: int, key: str) -> None:
+async def set_theme(uid: int, key: str, kind: str | None = None) -> None:
+    if kind:
+        await set_kind(uid, kind, "theme", key)
+        return
     (await _get(uid))["theme"] = key
     await _save(uid)
 
 
 
 # ---------------------------------------------------------------- caption template + time zone (autopost.py)
-async def get_template(uid: int) -> dict | None:
-    """{"html": caption with {placeholders}, "rows": [[label, url], ...]} or None"""
-    return (await _get(uid)).get("tpl") or None
+async def get_template(uid: int, kind: str | None = None) -> dict | None:
+    """{"html": caption with {placeholders}, "rows": [[label, url], ...]} or None.
+    With a kind: the template of that type (/settings), else the default one of /template."""
+    d = await _get(uid)
+    return _kd(d, kind).get("tpl") or d.get("tpl") or None
 
 
-async def set_template(uid: int, tpl: dict | None) -> None:
+async def set_template(uid: int, tpl: dict | None, kind: str | None = None) -> None:
+    if kind:
+        await set_kind(uid, kind, "tpl", tpl)
+        return
     (await _get(uid))["tpl"] = tpl
     await _save(uid)
 
