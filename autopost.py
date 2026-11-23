@@ -319,7 +319,7 @@ async def _ask_caption(client, uid: int, cid: int) -> None:
     ud["await"] = None
     rows = []
     try:
-        has_tpl = bool(await chstore.get_template(uid))
+        has_tpl = bool(await chstore.get_template(uid, dataset.kind_of(sch["anime"])))
     except Exception:
         has_tpl = False
     if has_tpl:
@@ -453,7 +453,8 @@ async def cmd_schedules(client, message):
 # ======================================================================
 async def _tpl_view(uid: int):
     tpl = await chstore.get_template(uid)
-    head = sc("📝 caption template\n") + sc("one caption with placeholders - they are filled in for every title:\n")
+    head = sc("📝 default caption template\n") + sc("one caption with placeholders - they are filled in for every title. "
+                                                     "movies, tv shows and anime can each get their own in /settings:\n")
     help_ = _placeholder_help()
     if not tpl:
         return (bq(head + help_ + "\n\n" + sc("you have no template yet.")),
@@ -466,6 +467,7 @@ async def _tpl_view(uid: int):
 async def cmd_template(client, message):
     uid = message.from_user.id
     _ud(uid)["await"] = None
+    _ud(uid).pop("tpl_kind", None)
     try:
         text, markup = await _tpl_view(uid)
     except Exception:
@@ -490,14 +492,24 @@ async def _preview_template(client, uid: int, cid: int, tpl: dict) -> bool:
 
 async def _finish_template(client, uid: int, cid: int, rows) -> None:
     ud = _ud(uid)
+    kind = ud.get("tpl_kind")                       # set by /settings -> 📝 template: save it for that type only
     tpl = dict(html=ud.pop("tpl_tmp", ""), rows=[[list(b) for b in row] for row in rows])
     ud["await"] = None
     if not await _preview_template(client, uid, cid, tpl):
         ud["tpl_tmp"] = tpl["html"]
         await _ask_buttons(client, uid, cid, "aptplb", "ap_tskip")
         return
-    await chstore.set_template(uid, tpl)
-    await client.send_message(cid, bq(sc("✅ template saved. it is offered under ⏰ schedule and 📣 post to channel.")),
+    ud.pop("tpl_kind", None)
+    await chstore.set_template(uid, tpl, kind)
+    if kind:
+        import settings
+        await client.send_message(
+            cid, bq(sc(f"✅ template saved for {settings.KINDS[kind][1]}. it is attached to every new poster of this type, "
+                       "and offered under ⏰ schedule and 📣 post to channel.")),
+            reply_markup=kb([btn("⚙️ back to settings", f"se_k:{kind}", color=BLUE)]))
+        return
+    await client.send_message(cid, bq(sc("✅ template saved. it is the default for movies, tv shows and anime, and is offered "
+                                         "under ⏰ schedule and 📣 post to channel. (/settings = a different one per type)")),
                               reply_markup=kb([btn("📝 open /template", "ap_tview", color=BLUE)]))
 
 
@@ -634,6 +646,7 @@ async def on_cb(client, cq):
         await cq.answer()
         ud["await"] = None
         ud.pop("tpl_tmp", None)
+        ud.pop("tpl_kind", None)
         await _cleanup(client, cid, ud.pop("sch", None))
         await cmds._edit(msg, bq(sc("✖️ cancelled.")))
 
@@ -698,7 +711,7 @@ async def on_cb(client, cq):
         await cq.answer()
         await cmds._safe_delete(client, cid, msg.id)
         if arg == "tpl":
-            tpl = await chstore.get_template(uid)
+            tpl = await chstore.get_template(uid, dataset.kind_of(sch["anime"]))
             if not tpl:
                 await _ask_caption(client, uid, cid)
                 return
@@ -749,6 +762,7 @@ async def on_cb(client, cq):
 
     elif cmd == "ap_tset":
         await cq.answer()
+        ud.pop("tpl_kind", None)                                   # the default template (the type ones start in /settings)
         ud["await"] = "aptpl"
         await client.send_message(
             cid,
@@ -782,7 +796,7 @@ async def on_cb(client, cq):
     elif cmd == "ap_usetpl":                                       # 📝 button of the 📣 post to channel flow
         pf = ud.get("pf")
         a = ud.get("anime")
-        tpl = await chstore.get_template(uid)
+        tpl = await chstore.get_template(uid, dataset.kind_of(a)) if a is not None else None
         if not pf or a is None or not tpl:
             await cq.answer(sc("session expired"), show_alert=True)
             return
