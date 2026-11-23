@@ -92,13 +92,14 @@ DARK_STYLES = {8, 9, 12, 13}      # dark-background styles: "black" turns into s
 # swoosh lines, outlined squares) disappeared. These two numbers set how light the dark shade is - change them
 # if you want it a bit darker or a bit lighter, nothing else has to be touched.
 #
-#   DARK_ACCENT_BOOST  lightness of the dark accents (buttons, circles, bands).  1.0 = the old, very dark look
-#                      1.3 = default (dark but the designs show)   1.5 = clearly lighter
-#   DARK_BLOB_KEEP     how dark the BIG shapes behind the poster get.  1.0 = old (almost black)
-#                      0.62 = default (dark grey / dark colour)   0.4 = lighter    0.0 = stay pale
+#   DARK_ACCENT_BOOST  lightness of the dark accents (buttons, circles, bands).  1.0 = very dark
+#                      1.35 = default (dark but the designs show)   1.5 = clearly lighter (nearly vivid)
+#   DARK_BLOB_KEEP     how dark the BIG shapes behind the poster get.  1.0 = almost black
+#                      0.38 = default (a clearly lighter shade, small stars / dots / lines stay visible on it)
+#                      0.62 = the older, darker look   0.2 = even lighter   0.0 = stay pale
 # ---------------------------------------------------------------------------------------------------------------
-DARK_ACCENT_BOOST = 1.30
-DARK_BLOB_KEEP = 0.62
+DARK_ACCENT_BOOST = 1.35
+DARK_BLOB_KEEP = 0.38
 
 
 def normalize(key: str | None) -> str:
