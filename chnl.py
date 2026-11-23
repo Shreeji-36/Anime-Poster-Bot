@@ -31,6 +31,7 @@ import chname
 import chstore
 import cmds
 import config
+import dataset
 from ui import BLUE, GREEN, NO_PREVIEW, RED, bq, btn, kb, sc
 
 log = logging.getLogger("chnl")
@@ -398,8 +399,8 @@ async def _ask_text(client, uid: int, cid: int) -> None:
     ud["await"] = "ptext"
     ch = await chstore.get_channel(uid, pf["chat_id"])
     row = [btn("⏭ no text", "ch_skiptext", color=BLUE)]
-    try:                                                         # a saved caption template (/template) -> one tap
-        if await chstore.get_template(uid):
+    try:                                                         # a saved caption template (/settings or /template) -> one tap
+        if await chstore.get_template(uid, dataset.kind_of(ud["anime"]) if ud.get("anime") is not None else None):
             row.append(btn("📝 use template", "ap_usetpl", color=GREEN))
     except Exception:
         pass
@@ -553,10 +554,15 @@ async def on_mode_forward(client, message):
 # ======================================================================
 # poster branding
 # ======================================================================
+def _brand_kind(ud: dict) -> str | None:
+    """the type ('anime' | 'movie' | 'tv') of the poster on screen - its watermark is the one that is edited"""
+    return dataset.kind_of(ud["anime"]) if ud.get("anime") is not None else None
+
+
 async def _apply_brand(client, uid: int, cid: int, text: str, extra_delete=()) -> None:
     """save the branding ('' = none), clean the editor up and redraw the poster the user is looking at"""
     ud = cmds._ud(uid)
-    await chstore.set_brand(uid, text)
+    await chstore.set_brand(uid, text, _brand_kind(ud))            # saved for the type of the poster on screen
     ud["await"] = None
     for mid in [ud.pop("brmsg", None), *extra_delete]:
         if mid:
@@ -601,7 +607,7 @@ async def on_cb(client, cq):
         await cq.answer()
         ud["await"] = "branding"
         ud["pmsg"] = msg.id                                       # the poster that gets redrawn with the new branding
-        cur = await chstore.get_brand(uid)
+        cur = await chstore.get_brand(uid, _brand_kind(ud))
         chans = (await chstore.channels(uid))[:5]
         rows = [[btn(f"➕ {c['title']}"[:40], f"ch_brpick:{c['id']}", raw=True, color=BLUE)] for c in chans]
         if cur:
@@ -609,8 +615,9 @@ async def on_cb(client, cq):
         rows.append([btn("✖️ cancel", "ch_cancel", color=RED)])
         m = await client.send_message(
             cid,
-            bq(sc("🏷 send your channel branding text.\n"
-                  "it is printed on every poster, written in that poster's own style - its font and its colours.\n"
+            bq(sc("🏷 send your watermark text.\n"
+                  "it is printed on every poster of this type (anime / movie / tv show), written in that poster's own "
+                  "style - its font and its colours. other types keep their own: /settings.\n"
                   f"up to {chname.LIMIT} characters, no emoji.") +
                ("\n\n" + sc("now: ") + f"<b>{html.escape(cur)}</b>" if cur else "") +
                ("\n" + sc("or tap one of your channels:") if chans else "")),
