@@ -73,7 +73,8 @@ HELP_CMDS = [
     ("/mychnls", "your channels"),
     ("/removechnl", "remove a channel"),
     ("/schedules", "your scheduled posts"),
-    ("/template", "your caption template ({title}, {score} ...)"),
+    ("/settings", "watermark, template, style, colour per type (movies / tv shows / anime)"),
+    ("/template", "your default caption template ({title}, {score} ...)"),
     ("/timezone", "set your time zone for scheduling"),
 ]
 
@@ -317,16 +318,23 @@ async def generate(client, user_id: int, chat_id: int, *, panel: bool = False, s
             await client.send_chat_action(chat_id, enums.ChatAction.UPLOAD_PHOTO)
         except RPCError:
             pass
-        try:                                                                 # the user's channel branding goes on every poster
-            ud["opts"]["chname"] = await asyncio.wait_for(chstore.get_brand(user_id), timeout=8)
+        kind = dataset.kind_of(ud["anime"])                                  # 'anime' | 'movie' | 'tv' - /settings are per type
+        try:                                                                 # the watermark of THIS type (else the default one)
+            ud["opts"]["chname"] = await asyncio.wait_for(chstore.get_brand(user_id, kind), timeout=8)
         except Exception:                                                    # database down / bad MONGO_URI must NOT block posters
             log.exception("branding lookup failed (is MONGO_URI correct?) -> making the poster without branding")
             ud["opts"]["chname"] = ""
-        if "theme" not in ud["opts"]:                                        # first poster of this session: the colour used last time
+        if "theme" not in ud["opts"] or ud.get("opts_kind") != kind:         # first poster, or another type than the last one
             try:
-                ud["opts"]["theme"] = themes.normalize(await asyncio.wait_for(chstore.get_theme(user_id), timeout=8))
+                ud["opts"]["theme"] = themes.normalize(await asyncio.wait_for(chstore.get_theme(user_id, kind), timeout=8))
             except Exception:
                 ud["opts"]["theme"] = themes.DEFAULT
+            try:
+                import settings
+                ud["opts"].update(await settings.kind_defaults(user_id, kind) if ud.get("opts_kind") != kind else {})
+            except Exception:
+                log.exception("could not load the /settings of %s", kind)
+            ud["opts_kind"] = kind
         t0 = time.monotonic()
         log.info("generate: start style=%s anime=%r", ud.get("style"), ud["anime"].title)
         try:
@@ -363,8 +371,25 @@ async def generate(client, user_id: int, chat_id: int, *, panel: bool = False, s
             delete_id = source_msg.id
         elif ud.get("pmsg"):
             edit_id = ud["pmsg"]
+        tech_caption = _caption(ud, rendered)
+        caption = tech_caption
+        try:                                                                 # the saved caption template of this type goes with the poster
+            import settings
+            tpl_caption, too_long = await settings.template_caption(user_id, ud["anime"])
+            if tpl_caption:
+                caption = tpl_caption
+            elif too_long:
+                tech_caption = caption = tech_caption + "\n" + bq(sc("⚠️ your template is longer than a telegram caption (1024). shorten it in /settings."))
+        except Exception:
+            log.exception("could not build the template caption")
         try:
-            await _show_photo(client, ud, chat_id, rendered, _caption(ud, rendered), markup, edit_id, delete_id)
+            try:
+                await _show_photo(client, ud, chat_id, rendered, caption, markup, edit_id, delete_id)
+            except Exception:
+                if caption is tech_caption:
+                    raise
+                log.warning("generate: telegram refused the template caption -> using the normal caption", exc_info=True)
+                await _show_photo(client, ud, chat_id, rendered, tech_caption, markup, edit_id, delete_id)
             log.info("generate: photo sent, total %.1fs", time.monotonic() - t0)
         except Exception:
             log.exception("generate: sending the poster failed")
@@ -543,10 +568,18 @@ async def _choose_style(client, user_id: int, chat_id: int, style: int, message)
 
 async def _handle_name(client, user_id: int, chat_id: int, query: str):
     ud = _ud(user_id)
-    if not ud.get("style"):                       # no style yet: remember the name, show the picker
-        ud["pending"] = query
-        await client.send_message(chat_id, pick_style_text(query), reply_markup=styles_keyboard())
-        return
+    if not ud.get("style"):                       # no style yet: the style saved in /settings for this type, else the picker
+        try:
+            import settings
+            saved = await settings.default_style(user_id, _kind(ud))
+        except Exception:
+            saved = None
+        if saved:
+            _set_style(ud, saved)
+        else:
+            ud["pending"] = query
+            await client.send_message(chat_id, pick_style_text(query), reply_markup=styles_keyboard())
+            return
     await _run_search(client, user_id, chat_id, query)
 
 
@@ -621,6 +654,14 @@ async def on_pick(client, cq):
                     kb([btn("🔍 new title", "na", color=GREEN)]))
         return
     ud["await"] = None
+    try:                                                            # another type than the last poster -> that type's saved style
+        import settings
+        saved = await settings.default_style(cq.from_user.id, kind)
+        if saved and ud.get("pick_kind") != kind:
+            _set_style(ud, saved)
+    except Exception:
+        log.exception("could not read the saved style")
+    ud["pick_kind"] = kind
     ud["opts"]["char"] = 0                                          # new anime -> first character candidate
     ud["opts"]["pic"] = 0                                           # ... and first poster / banner
     ud.pop("pmsg", None)
@@ -749,7 +790,7 @@ async def on_button(client, cq):
         await cq.answer(sc(f"{themes.label(key)} · rendering…"))
         opts["theme"] = key
         try:                                                        # remember it for next time (Mongo / json)
-            await asyncio.wait_for(chstore.set_theme(uid, key), timeout=8)
+            await asyncio.wait_for(chstore.set_theme(uid, key, dataset.kind_of(ud["anime"])), timeout=8)
         except Exception:
             log.warning("could not save the colour choice", exc_info=True)
         await generate(client, uid, cid, panel=True, source_msg=msg)
@@ -812,7 +853,8 @@ async def post_start(app):
         BotCommand("mychnls", "Your channels"),
         BotCommand("removechnl", "Remove a channel"),
         BotCommand("schedules", "Your scheduled posts"),
-        BotCommand("template", "Your caption template"),
+        BotCommand("settings", "Movies / TV Shows / Anime settings"),
+        BotCommand("template", "Your default caption template"),
         BotCommand("timezone", "Set your time zone"),
     ])
 
