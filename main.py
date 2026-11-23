@@ -11,6 +11,7 @@ import autopost
 import chnl
 import cmds
 import dataset
+import settings
 
 logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s",
                     level=config.LOG_LEVEL)
@@ -59,6 +60,7 @@ async def amain():
                  in_memory=True, parse_mode=enums.ParseMode.HTML, workers=4)   # 16 parallel updates = too much RAM on 512 MB
     chnl.register(app)       # before cmds: while a flow waits for text, these handlers must see it first
     autopost.register(app)   # also before cmds (scheduled posts + caption templates)
+    settings.register(app)   # also before cmds (/settings: watermark, template, style, colour per type)
     cmds.register(app)
     await app.start()
     await cmds.post_start(app)
