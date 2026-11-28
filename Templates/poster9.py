@@ -1,39 +1,51 @@
-import asyncio
+"""poster9 - "Glass card" look: black header with a script watermark, banner strip, red nebula synopsis + rating panel,
+full-height art on the right and a frosted glass card (title, season, genre chips, watermark) with two thumbnails.
+
+create_poster(raw, poster_bytes, banner_bytes, brand="", thumbs=())  ->  BytesIO (PNG, 2048 x 1152)
+
+ raw           AniList-shaped dict of the title (anime, movie and tv show all use the same keys)
+ poster_bytes  the chosen poster (it is the big art on the right)
+ banner_bytes  the banner strip on the left (falls back to a crop of the poster)
+ brand         the user's watermark: script text top-left AND the small line inside the card
+ thumbs        up to two more pictures for the two thumbnails (crops of the poster / banner when there are none)
+
+Everything that is NOT an artwork is drawn here: change a size / a position / a text with the constants right below.
+The red of the left panel is the "theme colour": it is a table of colours (GRAD) that themes.py swaps for the colour
+the user picked, so every colour of the bot gives the same look.
+"""
 import html
 import math
 import os
+import random
 import re
 import urllib.request
 from functools import lru_cache
 from io import BytesIO
 
-import aiohttp
-from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
+import numpy as np
+from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
+W, H = 2048, 1152
+LEFT_W = 708                                           # width of the left column
+
+# ------------------------------------------------------------ texts you may want to change
+TAGLINE_LEFT = "A COMPLETE ENTERTAINMENT EXPERIENCE"     # under the script watermark (top-left)
+TAGLINE_RIGHT = "YOUR ULTIMATE ANIME DESTINATION"        # under the X mark (top-right)
+DEFAULT_BRAND = "Anime Galaxy"                           # used when the user has not set a watermark
+TITLE_MAX_W = 350                                        # width of the title in the card (a longer title wraps to line 2)
+RATING_NOTE = "The ratings are sourced from a trusted {what} information website called {site}"
 
 # ------------------------------------------------------------ fonts
 FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
 _BASE = "https://raw.githubusercontent.com/google/fonts/main/ofl/"
-# style -> (google-fonts folder, file)
-FONT_FILES = {
-    "title": ("bebasneue", "BebasNeue-Regular.ttf"),   # cinematic title
+FONT_FILES = {                                           # style -> (google-fonts folder, file)
+    "script": ("yellowtail", "Yellowtail-Regular.ttf"),  # watermark, top-left   (swap for kaushanscript / playball / courgette ...)
+    "title": ("anton", "Anton-Regular.ttf"),             # the title in the card
     "bold": ("poppins", "Poppins-Bold.ttf"),
-    "semibold": ("poppins", "Poppins-SemiBold.ttf"),
-    "medium": ("poppins", "Poppins-Medium.ttf"),
     "regular": ("poppins", "Poppins-Regular.ttf"),
-    "body": ("barlow", "Barlow-Regular.ttf"),           # description text
-    "bodymed": ("barlow", "Barlow-Medium.ttf"),
-    "synopsis": ("spectral", "Spectral-MediumItalic.ttf"),      # synopsis text (stylish italic serif)
-    "btn": ("poppins", "Poppins-ExtraBold.ttf"),                # PLAY NOW / MY LIST
-    "label": ("kanit", "Kanit-Medium.ttf"),                     # SYNOPSIS heading
+    "light": ("poppins", "Poppins-Light.ttf"),
 }
-_FALLBACKS = {
-    "title": "DejaVuSans-Bold.ttf",
-    "bold": "DejaVuSans-Bold.ttf",
-    "semibold": "DejaVuSans-Bold.ttf",
-    "btn": "DejaVuSans-Bold.ttf",
-    "label": "DejaVuSans-Bold.ttf",
-}
+_FALLBACKS = {"script": "DejaVuSerif-Italic.ttf", "title": "DejaVuSans-Bold.ttf", "bold": "DejaVuSans-Bold.ttf"}
 
 
 def ensure_fonts():
@@ -49,415 +61,480 @@ def ensure_fonts():
             print(f"[fonts] could not download {name}: {e}")
 
 
-@lru_cache(maxsize=128)
+@lru_cache(maxsize=64)
 def get_font(style: str, size: int):
     path = os.path.join(FONT_DIR, FONT_FILES[style][1])
     if not os.path.exists(path):
         ensure_fonts()
-    try:
-        return ImageFont.truetype(path, size)
-    except Exception:
+    for p in (path, _FALLBACKS.get(style, "DejaVuSans.ttf")):
         try:
-            return ImageFont.truetype(_FALLBACKS.get(style, "DejaVuSans.ttf"), size)
+            return ImageFont.truetype(p, size)
         except Exception:
-            return ImageFont.load_default()
+            continue
+    return ImageFont.load_default()
 
 
-# ------------------------------------------------------------ images / text helpers
-async def fetch_bytes(url: str, retries: int = 3) -> bytes:
-    """Download an image with retries and validate it is a real image."""
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; PosterBot/1.0)"}
-    last = None
-    for i in range(retries):
-        try:
-            async with aiohttp.ClientSession(headers=headers) as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as r:
-                    r.raise_for_status()
-                    data = await r.read()
-            Image.open(io.BytesIO(data)).verify()
-            return data
-        except Exception as e:  # noqa
-            last = e
-            await asyncio.sleep(1 + i)
-    raise last
+# ------------------------------------------------------------ the theme colour: the red nebula of the left panel
+# rows = y inside the panel (503 .. 1152); columns = colour at the left edge / middle / right edge.
+# themes.py recolours every colour written here as (r, g, b) - keep that exact form.
+GRAD_Y = [512, 545, 620, 700, 740, 800, 830, 900, 940, 1000, 1060, 1100, 1140]
+GRAD = [
+    [(0, 0, 0), (19, 6, 5), (125, 40, 40)],
+    [(0, 0, 0), (31, 10, 9), (133, 43, 42)],
+    [(16, 4, 4), (58, 17, 17), (148, 48, 48)],
+    [(54, 15, 16), (91, 31, 32), (167, 56, 55)],
+    [(74, 23, 22), (108, 34, 35), (181, 64, 64)],
+    [(104, 36, 37), (135, 51, 50), (195, 75, 75)],
+    [(115, 40, 40), (148, 58, 58), (210, 95, 94)],
+    [(162, 86, 86), (189, 109, 109), (225, 112, 113)],
+    [(176, 96, 97), (198, 112, 113), (234, 130, 128)],
+    [(200, 122, 123), (213, 131, 132), (232, 160, 160)],
+    [(221, 147, 148), (229, 148, 149), (234, 175, 176)],
+    [(227, 151, 151), (238, 167, 167), (231, 186, 187)],
+    [(233, 155, 155), (243, 195, 195), (222, 171, 172)],
+]
+HEADER_END = (60, 20, 22)                                # right end of the black header's red fade
+CLOUD = (255, 214, 214)                                  # soft light clouds near the bottom of the panel
+
+WHITE = (255, 255, 255)
+CARD_PANEL = (8, 33, 43)                                 # dark teal panel behind the glass card
+NAVY = (11, 36, 51)                                      # text on the white chips
+ICON = (24, 52, 68)
 
 
-async def load_images(meta: dict):
-    """Returns (cover_bytes|None, banner_bytes|None). Tries every size, never raises."""
-    cover = banner = None
-    ci = meta.get("coverImage") or {}
-    for key in ("extraLarge", "large", "medium"):
-        if ci.get(key):
-            try:
-                cover = await fetch_bytes(ci[key])
-                break
-            except Exception as e:  # noqa
-                print(f"[img] cover {key} failed: {e}")
-    if meta.get("bannerImage"):
-        try:
-            banner = await fetch_bytes(meta["bannerImage"])
-        except Exception as e:  # noqa
-            print(f"[img] banner failed: {e}")
-    return cover, banner
+# ------------------------------------------------------------ small helpers
+def _ss_mask(size, draw_fn, ss=3):
+    m = Image.new("L", (size[0] * ss, size[1] * ss), 0)
+    draw_fn(ImageDraw.Draw(m), ss)
+    return m.resize(size, Image.LANCZOS)
 
 
-def clean_description(text: str) -> str:
-    if not text:
-        return "No description available."
-    text = re.sub(r"<br\s*/?>", " ", text, flags=re.I)
-    text = re.sub(r"<[^>]+>", "", text)
-    text = html.unescape(text)
-    text = re.sub(r"\(Source:.*?\)", "", text, flags=re.I | re.S)
-    text = re.sub(r"\[Written by.*?\]", "", text, flags=re.I | re.S)
-    return re.sub(r"\s+", " ", text).strip()
+def rr_mask(w, h, r):
+    return _ss_mask((w, h), lambda d, s: d.rounded_rectangle((0, 0, w * s - 1, h * s - 1), r * s, fill=255))
 
 
-W, H = 1280, 720          # design grid
-K = 3                     # render scale (supersampling)
-OUT = (1920, 1080)        # final size
-LEFT = 67
-GREEN = (70, 211, 105)
-RED = (229, 9, 20)          # Netflix logo only
-ACCENT = (176, 32, 44)      # softer red for button / accents
+def _open(data):
+    if not data:
+        return None
+    try:
+        im = Image.open(BytesIO(data))
+        im.load()
+        return im.convert("RGB")
+    except Exception:
+        return None
 
 
-def S(v):
-    return int(round(v * K))
+def fit_cover(img, w, h, cx=0.5, cy=0.5):
+    """scale + crop so the picture fills w x h (cx / cy = which part to keep, 0..1)"""
+    s = max(w / img.width, h / img.height)
+    nw, nh = max(w, round(img.width * s)), max(h, round(img.height * s))
+    img = img.resize((nw, nh), Image.LANCZOS)
+    x = int((nw - w) * cx)
+    y = int((nh - h) * cy)
+    return img.crop((x, y, x + w, y + h))
 
 
-# ------------------------------------------------------------ masks
-def _smooth(t):
-    t = max(0.0, min(1.0, t))
-    return t * t * (3 - 2 * t)
+def text_w(font, s):
+    return font.getlength(s)
 
 
-def _hmask(w, h, left=0, right=0):
-    row = Image.new("L", (w, 1), 255)
-    px = row.load()
-    for x in range(w):
-        v = 1.0
-        if left and x < left:
-            v = min(v, _smooth(x / left))
-        if right and x >= w - right:
-            v = min(v, _smooth((w - 1 - x) / right))
-        px[x, 0] = int(255 * v)
-    return row.resize((w, h), Image.NEAREST)
+def draw_center(d, xy, s, font, fill, anchor="ms"):
+    d.text(xy, s, font=font, fill=fill, anchor=anchor)
 
 
-def _ramp(w, h, axis, a0, a1):
-    n = w if axis == "x" else h
-    line = Image.new("L", (n, 1))
-    px = line.load()
-    for i in range(n):
-        px[i, 0] = int(a0 + (a1 - a0) * _smooth(i / max(1, n - 1)))
-    if axis == "x":
-        return line.resize((w, h), Image.NEAREST)
-    return line.rotate(-90, expand=True).resize((w, h), Image.NEAREST)
-
-
-def _shade(canvas, x, y, w, h, axis, a0, a1):
-    canvas.paste((0, 0, 0, 255), (x, y, x + w, y + h), _ramp(w, h, axis, a0, a1))
-
-
-# ------------------------------------------------------------ text
-def _tw(d, text, font, tr=0):
-    return sum(d.textlength(c, font=font) for c in text) + tr * max(0, len(text) - 1)
-
-
-def _tt(d, xy, text, font, fill, tr=0):
-    """Tracked (letter-spaced) text on a baseline."""
-    x, y = xy
-    for c in text:
-        d.text((x, y), c, font=font, fill=fill, anchor="ls")
-        x += d.textlength(c, font=font) + tr
-
-
-def _wrap(d, text, font, max_w, tr=0):
+def wrap(text, font, max_w, max_lines):
+    """greedy word wrap; text that does not fit in max_lines ends with '…'"""
+    words = text.split()
     lines, cur = [], ""
-    for word in text.split():
-        t = (cur + " " + word).strip()
-        if _tw(d, t, font, tr) <= max_w:
-            cur = t
+    for w in words:
+        t = (cur + " " + w).strip()
+        if cur and text_w(font, t) > max_w:
+            lines.append(cur)
+            cur = w
         else:
-            if cur:
-                lines.append(cur)
-            cur = word
+            cur = t
     if cur:
         lines.append(cur)
+    cut = len(lines) > max_lines
+    lines = lines[:max_lines]
+    if lines:
+        last = lines[-1]
+        if cut and not last.endswith("…"):
+            last = last.rstrip(" ,.;:-") + "…"
+        while text_w(font, last) > max_w and len(last) > 1:      # one very long word / the "…" does not fit
+            last = last[:-2].rstrip(" ,.;:-") + "…"
+        lines[-1] = last
     return lines
 
 
-def _balanced(d, text, font, tr, n, max_w):
-    """Wrap into <= n lines with the most even line lengths."""
-    lo = int(max(_tw(d, w, font, tr) for w in text.split()))
-    hi = int(max_w)
-    if lo > hi:
-        return _wrap(d, text, font, hi, tr)
-    for _ in range(14):
-        mid = (lo + hi) // 2
-        if len(_wrap(d, text, font, mid, tr)) <= n:
-            hi = mid
-        else:
-            lo = mid + 1
-    return _wrap(d, text, font, hi, tr)
+# ------------------------------------------------------------ data -> texts
+def _score(raw):
+    s = raw.get("averageScore") or raw.get("meanScore")
+    return f"{s / 10:.1f}" if s else None
 
 
-def _fit_title(d, title, max_w, tr):
-    """Long names: shrink -> balanced 2 lines -> balanced 3 lines -> '...' as a last resort."""
-    plans = [(range(104, 63, -4), 1), (range(92, 55, -4), 2), (range(68, 43, -4), 3)]
-    for sizes, n in plans:
-        for size in sizes:
-            f = get_font("title", S(size))
-            lines = [title] if n == 1 else _balanced(d, title, f, tr, n, max_w)
-            if len(lines) <= n and all(_tw(d, l, f, tr) <= max_w for l in lines):
-                return f, lines
-    f = get_font("title", S(44))
-    lines = _balanced(d, title, f, tr, 3, max_w)
-    if len(lines) > 3:
-        lines = lines[:3]
-        last = lines[-1]
-        while len(last) > 1 and _tw(d, last + "...", f, tr) > max_w:
-            last = last[:-1].rstrip()
-        lines[-1] = last + "..."
-    return f, lines
+def _kind(raw):
+    return raw.get("_kind") or "anime"
 
 
-def _badge(d, td, x, cy, text, font, tr):
-    tw = _tw(td, text, font, tr)
-    pad, h = S(7), S(19)
-    d.rounded_rectangle((x, cy - h // 2, x + tw + 2 * pad, cy + h // 2), radius=S(3),
-                        outline=(180, 180, 180), width=S(1))
-    _tt(td, (x + pad, cy + S(3.8)), text, font, (205, 205, 205), tr)
-    return x + tw + 2 * pad
+def _season_line(raw):
+    """SEASON 1 / SEASON 2 ... (from the title), MOVIE, OVA, ONA, SPECIAL ..."""
+    fmt = (raw.get("format") or "").upper()
+    if _kind(raw) == "movie" or fmt == "MOVIE":
+        return "MOVIE"
+    if fmt in ("OVA", "ONA", "SPECIAL", "MUSIC"):
+        return fmt
+    t = raw.get("title") or {}
+    names = [t.get("english"), t.get("romaji")] + list(raw.get("synonyms") or [])
+    for n in filter(None, names):
+        m = re.search(r"(?:season|cour)\s*(\d+)|(\d+)(?:st|nd|rd|th)\s*season", n, re.I)
+        if m:
+            return f"SEASON {m.group(1) or m.group(2)}"
+        if re.search(r"final\s+season", n, re.I):
+            return "FINAL SEASON"
+        m = re.search(r"\s(II|III|IV|V|VI)$", n.strip())
+        if m:
+            return f"SEASON {['', '', 'II', 'III', 'IV', 'V', 'VI'].index(m.group(1))}"
+    return "SEASON 1"
 
 
-# ------------------------------------------------------------ shapes
-def _netflix_n(d, x, y):
-    w, h, b = S(33), S(40), S(9)
-    d.polygon([(x, y), (x + b, y), (x + w, y + h), (x + w - b, y + h)], fill=(150, 5, 14))
-    d.rectangle((x, y, x + b, y + h), fill=RED)
-    d.rectangle((x + w - b, y, x + w, y + h), fill=RED)
+def _season_year(raw):
+    season = (raw.get("season") or "").upper()
+    year = raw.get("seasonYear") or (raw.get("startDate") or {}).get("year")
+    if season and year:
+        return f"{season} {year}"
+    return str(year) if year else ""
 
 
-def _star(d, cx, cy, r):
-    pts = []
-    for i in range(10):
-        a = -math.pi / 2 + i * math.pi / 5
-        rad = r if i % 2 == 0 else r * 0.45
-        pts.append((cx + rad * math.cos(a), cy + rad * math.sin(a)))
-    d.polygon(pts, fill=(255, 197, 24))
+def _synopsis(raw):
+    s = html.unescape(raw.get("description") or "")
+    s = re.sub(r"<br\s*/?>", " ", s, flags=re.I)
+    s = re.sub(r"<[^>]+>", "", s)
+    s = re.sub(r"\(Source:[^)]*\)|\[Written by[^\]]*\]", "", s, flags=re.I)
+    return re.sub(r"\s+", " ", s).strip() or "No synopsis available."
 
 
+def _title(raw):
+    t = raw.get("title") or {}
+    return (t.get("english") or t.get("romaji") or t.get("native") or "UNTITLED").strip()
 
-def _glass_box(canvas, box, radius):
-    """Smooth frosted-glass rounded panel (blurred backdrop + tint + hairline border + soft shadow)."""
-    x0, y0, x1, y1 = box
+
+# ------------------------------------------------------------ the left column
+def left_panel():
+    """black header + the red nebula synopsis panel -> RGB image (LEFT_W x H)"""
+    img = np.zeros((H, LEFT_W, 3), np.float32)
+    # header: black with a red fade on its right edge
+    x = np.arange(LEFT_W, dtype=np.float32)
+    t = np.clip((x - 560) / (LEFT_W - 560), 0, 1) ** 1.4
+    for c in range(3):
+        img[:135, :, c] = (HEADER_END[c] * t)[None, :]
+    # panel: colour table (rows y, columns left / middle / right) -> smooth 2D gradient
+    y0 = 503
+    ys = np.arange(y0, H, dtype=np.float32)
+    anchors = np.array(GRAD, np.float32)                     # (rows, 3 columns, rgb)
+    rows = np.stack([[np.interp(ys, GRAD_Y, anchors[:, col, ch]) for ch in range(3)] for col in range(3)])  # (col, ch, y)
+    u = np.clip(x / (LEFT_W - 1), 0, 1)
+    w_mid = np.clip(1 - np.abs(u - 0.5) * 2, 0, 1)
+    w_l = np.clip(1 - u * 2, 0, 1)
+    w_r = np.clip(u * 2 - 1, 0, 1)
+    for ch in range(3):
+        img[y0:, :, ch] = (rows[0, ch][:, None] * w_l[None, :] + rows[1, ch][:, None] * w_mid[None, :] +
+                           rows[2, ch][:, None] * w_r[None, :])
+    panel = Image.fromarray(np.clip(img, 0, 255).astype(np.uint8))
+
+    # soft clouds + stars in the lower half
+    rnd = random.Random(9)
+    cl = np.zeros((H - y0, LEFT_W), np.float32)
+    for scale, amp in ((90, 1.0), (40, 0.55), (18, 0.3)):
+        small = np.array([[rnd.random() for _ in range(LEFT_W // scale + 2)] for _ in range((H - y0) // scale + 2)], np.float32)
+        big = Image.fromarray((small * 255).astype(np.uint8)).resize((LEFT_W + scale * 2, H - y0 + scale * 2), Image.BICUBIC)
+        big = big.filter(ImageFilter.GaussianBlur(scale / 3))
+        cl += np.asarray(big, np.float32)[:H - y0, :LEFT_W] / 255 * amp
+    cl = np.clip((cl / 1.85 - 0.38) * 2.4, 0, 1)
+    yy = np.linspace(0, 1, H - y0, dtype=np.float32)[:, None]
+    cl *= np.clip((yy - 0.40) / 0.40, 0, 1) * 0.80
+    cloud = Image.new("RGB", (LEFT_W, H - y0), CLOUD)
+    panel.paste(cloud, (0, y0), Image.fromarray((cl * 255).astype(np.uint8)))
+
+    stars = Image.new("RGBA", (LEFT_W, H), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(stars)
+    for _ in range(170):
+        sx, sy = rnd.randrange(LEFT_W), rnd.randrange(y0 + 20, H)
+        a = int(70 + 150 * rnd.random() ** 2)
+        r = rnd.choice((0.9, 0.9, 1.2, 1.5, 2.0))
+        sd.ellipse((sx - r, sy - r, sx + r, sy + r), fill=(255, 255, 255, a))
+    for _ in range(7):                                       # a few bigger glowing stars
+        sx, sy = rnd.randrange(30, LEFT_W - 30), rnd.randrange(y0 + 60, H - 60)
+        sd.ellipse((sx - 3, sy - 3, sx + 3, sy + 3), fill=(255, 255, 255, 150))
+    stars = stars.filter(ImageFilter.GaussianBlur(0.6))
+    panel = panel.convert("RGBA")
+    panel.alpha_composite(stars)
+    return panel.convert("RGB")
+
+
+def _arrow(d, cx, cy, w, h, direction=1, fill=WHITE):
+    """swept-back arrow head, pointing right (direction 1) or left (-1)"""
+    pts = [(w / 2, 0), (-w / 2, -h / 2), (-w * 0.28, -h * 0.06), (-w * 0.12, 0), (-w * 0.28, h * 0.06), (-w / 2, h / 2)]
+    d.polygon([(cx + direction * px, cy + py) for px, py in pts], fill=fill)
+
+
+def left_decor(ov):
+    """white details of the left column, drawn on a transparent overlay"""
+    d = ImageDraw.Draw(ov)
+    # the two punched holes on the header's right edge
+    for cy in (17, 115):
+        d.ellipse((689 - 11, cy - 11, 689 + 11, cy + 11), fill=WHITE + (255,))
+    # line + three arrow heads under the synopsis
+    line = Image.new("L", (600, 2), 0)
+    line.putdata([int(255 * min(1, 0.25 + x / 320)) for x in range(600) for _ in range(2)])
+    ov.paste(Image.new("RGBA", (600, 2), WHITE + (255,)), (0, 777), line)
+    for i in range(3):
+        _arrow(d, 614 + i * 24.5, 778, 24, 22, 1, WHITE + (255,))
+
+
+def dock(canvas):
+    """white rounded dock on the left edge with three small icons"""
+    x0, y0, x1, y1 = -30, 852, 58, 1046
     w, h = x1 - x0, y1 - y0
-    # soft shadow
-    pad = S(24)
-    sh = Image.new("L", (w + 2 * pad, h + 2 * pad), 0)
-    ImageDraw.Draw(sh).rounded_rectangle((pad, pad + S(5), pad + w, pad + h + S(5)), radius=radius, fill=120)
-    sh = sh.filter(ImageFilter.GaussianBlur(S(10)))
-    canvas.paste((0, 0, 0, 255), (x0 - pad, y0 - pad), sh)
-    # frosted backdrop
-    region = canvas.crop(box).filter(ImageFilter.GaussianBlur(S(12)))
-    region = ImageEnhance.Brightness(region).enhance(0.5)
-    mask = Image.new("L", (w, h), 0)
-    ImageDraw.Draw(mask).rounded_rectangle((0, 0, w - 1, h - 1), radius=radius, fill=255)
-    canvas.paste(region, (x0, y0), mask)
-    # glass tint + border
-    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    ImageDraw.Draw(layer).rounded_rectangle((0, 0, w - 1, h - 1), radius=radius,
-                                            fill=(255, 255, 255, 14), outline=(255, 255, 255, 60), width=S(1))
-    canvas.alpha_composite(layer, (x0, y0))
+    m = rr_mask(w, h, 26)
+    layer = Image.new("RGB", (w, h), (255, 255, 255))
+    sh = Image.new("L", (w + 40, h + 40), 0)
+    sh.paste(m, (20, 20))
+    sh = sh.filter(ImageFilter.GaussianBlur(8)).point(lambda v: int(v * 0.25))
+    canvas.paste(Image.new("RGB", sh.size, (0, 0, 0)), (x0 - 20, y0 - 14), sh)
+    canvas.paste(layer, (x0, y0), m)
+    d = ImageDraw.Draw(canvas)
+    cx = 28
+    # globe
+    cy = 883
+    d.ellipse((cx - 11, cy - 11, cx + 11, cy + 11), outline=ICON, width=2)
+    d.ellipse((cx - 5, cy - 11, cx + 5, cy + 11), outline=ICON, width=1)
+    d.line((cx - 11, cy, cx + 11, cy), fill=ICON, width=1)
+    d.arc((cx - 11, cy - 6, cx + 11, cy + 6), 0, 180, fill=ICON, width=1)
+    d.line((cx - 12, cy + 7, cx + 12, cy - 7), fill=ICON, width=2)          # orbit
+    d.line((15, 911, 44, 911), fill=(205, 208, 210), width=2)
+    # map pin
+    cy = 941
+    d.polygon([(cx, cy + 14), (cx - 10, cy - 3), (cx + 10, cy - 3)], fill=ICON)
+    d.ellipse((cx - 10, cy - 13, cx + 10, cy + 7), fill=ICON)
+    d.ellipse((cx - 4, cy - 7, cx + 4, cy + 1), fill=WHITE)
+    d.line((15, 970, 44, 970), fill=(205, 208, 210), width=2)
+    # little badge
+    d.rounded_rectangle((cx - 9, 988, cx + 9, 1016), 2, fill=(12, 36, 52))
+    d.ellipse((cx - 4, 996, cx + 4, 1004), outline=WHITE, width=1)
+    d.line((cx - 5, 1010, cx + 5, 1010), fill=(150, 170, 180), width=1)
 
 
-def _glow(canvas, box, color, radius, alpha=150, blur=8, dy=5):
-    """Soft coloured shadow under a pill button."""
-    x0, y0, x1, y1 = box
-    w, h = x1 - x0, y1 - y0
-    pad = S(blur * 3)
-    m = Image.new("L", (w + 2 * pad, h + 2 * pad), 0)
-    ImageDraw.Draw(m).rounded_rectangle((pad, pad + S(dy), pad + w, pad + h + S(dy)), radius=radius, fill=alpha)
-    m = m.filter(ImageFilter.GaussianBlur(S(blur)))
-    canvas.paste(color + (255,), (x0 - pad, y0 - pad), m)
+# ------------------------------------------------------------ the brush X (top-right)
+def brush_x(ov, ox=1408, oy=36, size=64):
+    ss = 5
+    S = size * ss
+    m = Image.new("L", (S, S), 0)
+    d = ImageDraw.Draw(m)
+    rnd = random.Random(21)
 
-# ------------------------------------------------------------ images
-def _placeholder(meta):
-    """Used only if every image download failed."""
-    col = ((meta.get("coverImage") or {}).get("color") or "#2a3550").lstrip("#")
-    try:
-        c = tuple(int(col[i:i + 2], 16) for i in (0, 2, 4))
-    except Exception:
-        c = (42, 53, 80)
-    im = Image.new("RGB", (460, 650), c)
-    return ImageOps.colorize(ImageOps.grayscale(im).filter(ImageFilter.GaussianBlur(2)), (0, 0, 0), c)
+    def stroke(p0, p1, w0, w1):
+        (x0, y0), (x1, y1) = p0, p1
+        L = math.hypot(x1 - x0, y1 - y0)
+        nx, ny = -(y1 - y0) / L, (x1 - x0) / L
+        n = 40
+        top, bot = [], []
+        for i in range(n + 1):
+            t = i / n
+            half = (w0 + (w1 - w0) * math.sin(math.pi * t) ** 0.6) / 2 + rnd.uniform(-1, 1) * ss * 0.75
+            cx, cy = x0 + (x1 - x0) * t, y0 + (y1 - y0) * t
+            top.append((cx + nx * half, cy + ny * half))
+            bot.append((cx - nx * half, cy - ny * half))
+        d.polygon(top + bot[::-1], fill=255)
+        for end, sgn in ((p0, -1), (p1, 1)):                  # dry-brush bristle streaks at both ends
+            for _ in range(11):
+                off = rnd.uniform(-0.5, 0.5) * w1 * 1.1
+                ln = rnd.uniform(3, 9) * ss
+                sx, sy = end[0] + nx * off, end[1] + ny * off
+                ex, ey = sx + sgn * (x1 - x0) / L * ln, sy + sgn * (y1 - y0) / L * ln
+                d.line((sx, sy, ex, ey), fill=255, width=max(1, int(rnd.uniform(0.7, 1.6) * ss)))
+
+    a = ss
+    stroke((7 * a, 7 * a), (57 * a, 58 * a), 22 * a, 17 * a)
+    stroke((58 * a, 8 * a), (6 * a, 57 * a), 21 * a, 17 * a)
+    for _ in range(16):                                       # splatter
+        px = rnd.choice((rnd.uniform(0, 12), rnd.uniform(50, 64))) * a
+        py = rnd.choice((rnd.uniform(0, 14), rnd.uniform(48, 64))) * a
+        r = rnd.uniform(0.5, 1.6) * a
+        d.ellipse((px - r, py - r, px + r, py + r), fill=255)
+    m = m.resize((size, size), Image.LANCZOS)
+    ov.paste(Image.new("RGBA", (size, size), WHITE + (255,)), (ox, oy), m)
 
 
-def _open(b):
-    return Image.open(BytesIO(b)).convert("RGB") if b else None
-
-
-def _build_hero(cover, banner, use_banner, zw, zh):
-    if use_banner and banner is not None:
-        return ImageOps.fit(banner, (zw, zh), Image.LANCZOS)
-    bg = ImageOps.fit(cover, (zw, zh), Image.LANCZOS).filter(ImageFilter.GaussianBlur(S(30)))
-    bg = ImageEnhance.Brightness(bg).enhance(0.45)
-    fg = ImageOps.contain(cover, (zw - S(120), zh), Image.LANCZOS)
-    fg = fg.filter(ImageFilter.UnsharpMask(radius=S(1.2), percent=70, threshold=3))
-    bg.paste(fg, ((zw - fg.width) // 2, (zh - fg.height) // 2), _hmask(fg.width, fg.height, S(60), S(60)))
-    return bg
+# ------------------------------------------------------------ outline helper (the ghost season text)
+def outline_text(ov, xy, s, font, color, alpha):
+    m = Image.new("L", ov.size, 0)
+    ImageDraw.Draw(m).text(xy, s, font=font, fill=255, anchor="mm")
+    edge = ImageChops.subtract(m, m.filter(ImageFilter.MinFilter(3)))
+    ov.paste(Image.new("RGBA", ov.size, color + (alpha,)), (0, 0), edge)
 
 
 # ------------------------------------------------------------ main
-def create_poster(meta: dict, cover_bytes: bytes = None, banner_bytes: bytes = None,
-                  use_banner: bool = False) -> BytesIO:
-    cover, banner = _open(cover_bytes), _open(banner_bytes)
-    if cover is None:                                   # fallbacks: banner -> placeholder
-        cover = banner if banner is not None else _placeholder(meta)
+def create_poster(raw, poster_bytes, banner_bytes=None, brand="", thumbs=()):
+    raw = raw or {}
+    brand = (brand or "").strip() or DEFAULT_BRAND
+    poster = _open(poster_bytes)
+    banner = _open(banner_bytes)
+    if poster is None and banner is None:
+        poster = Image.new("RGB", (800, 1100), (40, 30, 40))
+    art = poster or banner
+    ban = banner or fit_cover(art, 1010, 368, 0.5, 0.3)
 
-    t = meta.get("title") or {}
-    title = (t.get("english") or t.get("romaji") or t.get("native") or "Unknown").upper()
-    year = meta.get("seasonYear") or (meta.get("startDate") or {}).get("year") or ""
-    score = meta.get("averageScore") or meta.get("meanScore")
-    genres = [g.upper() for g in (meta.get("genres") or [])[:3]]
-    desc = clean_description(meta.get("description"))
-    age = "TV-MA" if meta.get("isAdult") else "TV-14"
-    eps = meta.get("episodes")
+    # ---- 1. canvas: left column + right art
+    canvas = Image.new("RGB", (W, H), (0, 0, 0))
+    canvas.paste(left_panel(), (0, 0))
+    rw = W - LEFT_W
+    bg = fit_cover(art, rw, H, 0.5, 0.33)
+    bg = ImageEnhance.Brightness(bg).enhance(0.78)
+    bg = ImageEnhance.Color(bg).enhance(0.92)
+    shade = np.ones((H, rw), np.float32)
+    yy = np.linspace(0, 1, H, dtype=np.float32)[:, None]
+    xx = np.linspace(0, 1, rw, dtype=np.float32)[None, :]
+    shade *= 0.28 + 0.72 * np.clip(yy / 0.30, 0, 1) ** 0.8            # dark at the top
+    shade *= 0.55 + 0.45 * np.clip(xx / 0.22, 0, 1)                    # dark next to the left column
+    shade *= 1 - 0.30 * np.clip((xx - 0.70) / 0.3, 0, 1)               # slight vignette at the far right
+    bg = Image.fromarray(np.clip(np.asarray(bg, np.float32) * shade[:, :, None], 0, 255).astype(np.uint8))
+    canvas.paste(bg, (LEFT_W, 0))
 
-    canvas = Image.new("RGBA", (S(W), S(H)), (0, 0, 0, 255))
+    # ---- 2. banner strip (rounded, overlaps the right art)
+    bw, bh = 1010, 368
+    strip = fit_cover(ban, bw, bh, 0.5, 0.4)
+    canvas.paste(strip, (0, 135), rr_mask(bw, bh, 36))
 
-    # hero art (right side) faded into black
-    zx, zw = S(430), S(760)
-    hero = _build_hero(cover, banner, use_banner, zw, S(H))
-    canvas.paste(hero, (zx, 0), _hmask(zw, S(H), S(240), S(290)))
-    _shade(canvas, 0, 0, S(720), S(H), "x", 235, 0)           # left text shade
-    _shade(canvas, 0, S(H - 280), S(W), S(280), "y", 0, 215)  # bottom shade
-    _shade(canvas, 0, 0, S(W), S(130), "y", 170, 0)           # top vignette
+    # ---- 3. glass card + thumbnails
+    cx0, cy0, cx1, cy1 = 1190, 660, 1918, 1120
+    cw, ch = cx1 - cx0, cy1 - cy0
+    region = canvas.crop((cx0, cy0, cx1, cy1)).filter(ImageFilter.GaussianBlur(18))
+    region = ImageEnhance.Brightness(region).enhance(0.82)
+    px0, px1 = 1335 - cx0, 1855 - cx0                                    # the dark teal panel inside the card
+    panel = Image.new("RGB", (px1 - px0, ch), CARD_PANEL)
+    region.paste(Image.blend(region.crop((px0, 0, px1, ch)), panel, 0.80), (px0, 0))
+    region = Image.blend(region, Image.new("RGB", region.size, WHITE), 0.22)
+    canvas.paste(region, (cx0, cy0), rr_mask(cw, ch, 36))
+    canvas.paste(Image.new("RGB", (1855 - 1335, H - cy1), CARD_PANEL), (1335, cy1))   # the panel runs to the bottom edge
 
-    d = ImageDraw.Draw(canvas)                                   # shapes
-    tl = Image.new("RGBA", canvas.size, (0, 0, 0, 0))            # light text (gets a soft shadow)
-    td = ImageDraw.Draw(tl)
-    tm = Image.new("L", canvas.size, 0)                          # title mask (gets a gradient fill)
-    tmd = ImageDraw.Draw(tm)
+    d = ImageDraw.Draw(canvas)
+    for cy in (697, 1086):                                               # punched holes
+        d.ellipse((1875 - 27, cy - 27, 1875 + 27, cy + 27), fill=(235, 235, 235))
 
-    _netflix_n(d, S(57), S(47))
+    tl = []
+    pool = [_open(t) for t in (thumbs or ())]
+    pool = [t for t in pool if t is not None]
+    fallback = [fit_cover(art, 400, 400, 0.5, 0.18), fit_cover(ban, 400, 400, 0.62, 0.5)]
+    for i in range(2):
+        tl.append(pool[i] if i < len(pool) else fallback[i])
+    for i, ty in enumerate((688, 890)):
+        fw, fh = 194, 194
+        fm = rr_mask(fw, fh, 30)
+        sh = Image.new("L", (fw + 40, fh + 40), 0)
+        sh.paste(fm, (20, 20))
+        sh = sh.filter(ImageFilter.GaussianBlur(9)).point(lambda v: int(v * 0.35))
+        canvas.paste(Image.new("RGB", sh.size, (0, 0, 0)), (1102 - 20, ty - 14), sh)
+        base = canvas.crop((1102, ty, 1102 + fw, ty + fh)).filter(ImageFilter.GaussianBlur(6))
+        frame = Image.blend(base, Image.new("RGB", (fw, fh), WHITE), 0.42)
+        canvas.paste(frame, (1102, ty), fm)
+        inner = fit_cover(tl[i], fw - 24, fh - 24, 0.5, 0.35)
+        canvas.paste(inner, (1102 + 12, ty + 12), rr_mask(fw - 24, fh - 24, 20))
 
-    # ---- title: Bebas Neue, letter-spaced, bottom anchored
-    tr = S(2.5)
-    f_title, lines = _fit_title(d, title, S(640), tr)
-    base = S(414)
-    step = int(f_title.size * 0.98)
-    for i, line in enumerate(reversed(lines)):
-        _tt(tmd, (S(LEFT), base - i * step), line, f_title, 255, tr)
+    canvas = canvas.convert("RGBA")
+    ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    od = ImageDraw.Draw(ov)
+    left_decor(ov)
 
-    # ---- meta row: match / year / badges / episodes
-    f_match = get_font("semibold", S(17))
-    f_year = get_font("medium", S(17))
-    f_tag = get_font("semibold", S(10.5))
-    x, cy = S(LEFT), S(448)
-    if score:
-        txt = f"{score}% Match"
-        _tt(td, (x, cy + S(6)), txt, f_match, GREEN, S(0.4))
-        x += _tw(td, txt, f_match, S(0.4)) + S(22)
-    if year:
-        _tt(td, (x, cy + S(6)), str(year), f_year, (215, 215, 215), S(0.5))
-        x += _tw(td, str(year), f_year, S(0.5)) + S(14)
-    x = _badge(d, td, x, cy, age, f_tag, S(0.9)) + S(8)
-    x = _badge(d, td, x, cy, "HD", f_tag, S(0.9)) + S(16)
-    if eps:
-        _tt(td, (x, cy + S(4)), f"{eps} EPISODES", get_font("medium", S(11)), (160, 160, 160), S(1.4))
+    # ---- 4. header: script watermark + tagline
+    f_script = get_font("script", 44)
+    while text_w(f_script, brand) > 430 and f_script.size > 20:
+        f_script = get_font("script", f_script.size - 2)
+    od.text((63, 77), brand, font=f_script, fill=WHITE + (255,), anchor="ls")
+    f15 = get_font("regular", 15)
+    od.ellipse((163, 85, 169, 91), fill=WHITE + (255,))
+    od.text((180, 88), TAGLINE_LEFT, font=f15, fill=WHITE + (255,), anchor="lm")
 
-    # ---- genres: tracked caps with red dot separators
-    f_gen = get_font("medium", S(11.5))
-    gx, gy = S(LEFT), S(479)
+    # ---- 5. top-right: brush X, tagline, line
+    brush_x(ov)
+    for cy in (113, 126):
+        od.ellipse((1328 - 3.5, cy - 3.5, 1328 + 3.5, cy + 3.5), fill=WHITE + (255,))
+    od.text((1341, 116), TAGLINE_RIGHT, font=f15, fill=WHITE + (255,), anchor="lm")
+    od.rounded_rectangle((1328, 134, 1735, 136), 1, fill=WHITE + (255,))
+
+    # ---- 6. season ghost text + arrows + line
+    season = _season_year(raw)
+    if season:
+        f = get_font("light", 26)
+        tw = text_w(f, season)
+        pw = int(tw + 30)
+        pcx = 1481
+        pill = rr_mask(pw, 38, 19)
+        edge = ImageChops.subtract(pill, pill.filter(ImageFilter.MinFilter(3)))
+        ov.paste(Image.new("RGBA", (pw, 38), (125, 125, 125, 215)), (pcx - pw // 2, 583), edge)
+        outline_text(ov, (pcx, 602), season, f, (125, 125, 125), 235)
+    for i in range(3):
+        _arrow(od, 1630 + i * 25, 604, 34, 34, -1, WHITE + (255,))
+    od.rounded_rectangle((1717, 603, 1820, 605), 1, fill=WHITE + (255,))
+
+    # ---- 7. synopsis / rating (left column)
+    f_h = get_font("bold", 41)
+    draw_center(od, (356, 598), "SYNOPSIS", f_h, WHITE + (255,))
+    f_s = get_font("regular", 17)
+    lines = wrap(_synopsis(raw), f_s, 490, 5)
+    for i, ln in enumerate(lines):
+        draw_center(od, (354, 632 + round(i * 21.5)), ln, f_s, WHITE + (255,))
+    score = _score(raw)
+    draw_center(od, (357, 889), f"RATING: {score}/10" if score else "RATING: N/A", f_h, WHITE + (255,))
+    kind = _kind(raw)
+    what, site = {"movie": ("movie", "TMDB"), "tv": ("tv show", "TMDB")}.get(kind, ("anime", "Anilist"))
+    note = wrap(RATING_NOTE.format(what=what, site=site), get_font("light", 19), 400, 2)
+    for i, ln in enumerate(note):
+        draw_center(od, (358, 961 + i * 23), ln, get_font("light", 19), (255, 255, 255, 205))
+
+    # ---- 8. the card text
+    f_t = get_font("title", 54)
+    tlines = wrap(_title(raw).upper(), f_t, TITLE_MAX_W, 2)              # too long for two lines -> "…"
+    base = 800 if len(tlines) > 1 else 776
+    for i, ln in enumerate(tlines):
+        draw_center(od, (1604, base - (len(tlines) - 1 - i) * 51), ln, f_t, WHITE + (255,))
+    draw_center(od, (1601, 830), _season_line(raw), get_font("light", 25), WHITE + (240,))
+
+    genres = [g.upper() for g in (raw.get("genres") or [])][:5]
+    if len(raw.get("genres") or []) > 5:
+        genres.append("···")
+    chips = []
     for i, g in enumerate(genres):
-        if i:
-            d.ellipse((gx + S(9) - S(2), gy - S(2), gx + S(9) + S(2), gy + S(2)), fill=ACCENT)
-            gx += S(18)
-        _tt(td, (gx, gy + S(4.2)), g, f_gen, (178, 178, 178), S(1.6))
-        gx += _tw(td, g, f_gen, S(1.6))
+        f = get_font("bold" if i == 0 else "regular", 19)
+        chips.append((g, f, max(88, int(text_w(f, g) + 34)), i % 2 == 0))
+    rows = [chips[:3], chips[3:6]] if len(chips) > 3 else [chips]
+    for ri, row in enumerate(rows):
+        if not row:
+            continue
+        total = sum(c[2] for c in row) + 8 * (len(row) - 1)
+        x = 1590 - total / 2
+        top = 839 + ri * 47
+        for g, f, w, filled in row:
+            box = (round(x), top, round(x) + w, top + 41)
+            if filled:
+                od.rounded_rectangle(box, 20, fill=(251, 252, 252, 255))
+                od.text(((box[0] + box[2]) / 2, top + 21), g, font=f, fill=NAVY + (255,), anchor="mm")
+            else:
+                od.rounded_rectangle(box, 20, outline=WHITE + (255,), width=2)
+                od.text(((box[0] + box[2]) / 2, top + 21), g, font=f, fill=WHITE + (255,), anchor="mm")
+            x += w + 8
+    od.rounded_rectangle((1535, 979, 1636, 981), 1, fill=WHITE + (255,))
+    f_w = get_font("regular", 17)
+    wm = brand.upper()
+    while text_w(f_w, wm) > 420 and f_w.size > 11:
+        f_w = get_font("regular", f_w.size - 1)
+    draw_center(od, (1597, 1023), wm, f_w, WHITE + (235,), anchor="mm")
 
-    # ---- synopsis in a smooth glass box
-    bx0, by0, bx1, by1 = S(LEFT), S(496), S(LEFT + 452), S(622)
-    _glass_box(canvas, (bx0, by0, bx1, by1), S(12))
-    d = ImageDraw.Draw(canvas)
+    canvas.alpha_composite(ov)
+    canvas = canvas.convert("RGB")
+    dock(canvas)
 
-    hx, hy = bx0 + S(16), by0 + S(19)
-    d.rounded_rectangle((hx, hy - S(6.5), hx + S(3), hy + S(6.5)), radius=S(1.5), fill=ACCENT)
-    _tt(td, (hx + S(11), hy + S(4.5)), "SYNOPSIS", get_font("label", S(11.5)), (240, 240, 240), S(2.4))
-
-    f_desc = get_font("synopsis", S(15.5))
-    max_w, max_lines = S(452 - 32), 4
-    dl = _wrap(d, desc, f_desc, max_w)
-    if len(dl) > max_lines:
-        dl = dl[:max_lines]
-        last = dl[-1].split()
-        while last and d.textlength(" ".join(last) + "...", font=f_desc) > max_w:
-            last.pop()
-        dl[-1] = " ".join(last) + "..."
-    for i, line in enumerate(dl):
-        td.text((hx, by0 + S(45 + i * 19.5)), line, font=f_desc, fill=(226, 226, 226), anchor="lm")
-
-    # ---- buttons: pill + text + circle icon (red PLAY NOW / glass MY LIST), rating beside them
-    f_btn = get_font("btn", S(14.5))
-    trb = S(0.9)
-    x0, top, bh = S(LEFT), S(634), S(42)
-    cyb = top + bh // 2
-    dia, padl, padr, gap = S(28), S(22), S(7), S(16)
-    base_y = cyb + S(5.1)
-
-    # PLAY NOW  (red pill, white circle with red play icon)
-    tw = _tw(d, "PLAY NOW", f_btn, trb)
-    pw = int(padl + tw + gap + dia + padr)
-    _glow(canvas, (x0, top, x0 + pw, top + bh), ACCENT, bh // 2, alpha=75)
-    d = ImageDraw.Draw(canvas)
-    d.rounded_rectangle((x0, top, x0 + pw, top + bh), radius=bh // 2, fill=ACCENT)
-    _tt(d, (x0 + padl, base_y), "PLAY NOW", f_btn, (255, 255, 255), trb)
-    ccx, ccy = x0 + pw - padr - dia // 2, cyb
-    d.ellipse((ccx - dia // 2, ccy - dia // 2, ccx + dia // 2, ccy + dia // 2), fill=(255, 255, 255))
-    d.polygon([(ccx - S(3.5), ccy - S(6)), (ccx - S(3.5), ccy + S(6)), (ccx + S(6.5), ccy)], fill=ACCENT)
-
-    # MY LIST  (glass pill, white circle with dark plus)
-    mx = x0 + pw + S(14)
-    tw2 = _tw(d, "MY LIST", f_btn, trb)
-    mw = int(padl + tw2 + gap + dia + padr)
-    _glass_box(canvas, (mx, top, mx + mw, top + bh), bh // 2)
-    d = ImageDraw.Draw(canvas)
-    _tt(td, (mx + padl, base_y), "MY LIST", f_btn, (245, 245, 245), trb)
-    ccx = mx + mw - padr - dia // 2
-    d.ellipse((ccx - dia // 2, ccy - dia // 2, ccx + dia // 2, ccy + dia // 2), fill=(255, 255, 255))
-    lw = int(S(2.6))
-    d.line((ccx - S(6), ccy, ccx + S(6), ccy), fill=(20, 20, 24), width=lw)
-    d.line((ccx, ccy - S(6), ccx, ccy + S(6)), fill=(20, 20, 24), width=lw)
-
-    if score:
-        sx = mx + mw + S(36)
-        _star(d, sx, cyb, S(13))
-        f_sc = get_font("bold", S(22))
-        sc = f"{score / 10:.1f}"
-        td.text((sx + S(22), cyb + S(1)), sc, font=f_sc, fill=(255, 255, 255), anchor="lm")
-        td.text((sx + S(22) + td.textlength(sc, font=f_sc) + S(3), cyb + S(5)), "/10",
-                font=get_font("medium", S(12)), fill=(150, 150, 150), anchor="lm")
-
-    # ---- text pass: soft shadow -> light text -> gradient title
-    alpha = ImageChops.lighter(tl.split()[3], tm)
-    shadow = alpha.filter(ImageFilter.GaussianBlur(S(3.5))).point(lambda v: int(v * 0.9))
-    canvas.paste((0, 0, 0, 255), (S(1.5), S(3)), shadow)
-    canvas.alpha_composite(tl)
-    bb = tm.getbbox()
-    if bb:
-        gw, gh = bb[2] - bb[0], bb[3] - bb[1]
-        col = Image.new("RGB", (1, gh))
-        px = col.load()
-        for y in range(gh):
-            k = y / max(1, gh - 1)
-            px[0, y] = tuple(int(a + (b - a) * k) for a, b in zip((255, 255, 255), (190, 202, 228)))
-        canvas.paste(col.resize((gw, gh)), (bb[0], bb[1]), tm.crop(bb))
-
-    out = canvas.convert("RGB").resize(OUT, Image.LANCZOS)
-    buf = BytesIO()
-    out.save(buf, "JPEG", quality=97, subsampling=0, optimize=True)
-    buf.name = "poster.jpg"
-    buf.seek(0)
-    return buf
+    out = BytesIO()
+    canvas.save(out, "PNG", compress_level=1)
+    out.seek(0)
+    return out
