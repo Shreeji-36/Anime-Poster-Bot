@@ -184,6 +184,9 @@ def recolor_rgb(rgb: RGB, theme_key: str, style_id: int, ref_hue: float | None =
     _, s_hsv, _ = colorsys.rgb_to_hsv(r, g, b)
 
     if t.hue is None:                                           # ---- black
+        if style_id == 9:                                       # style 9: the red nebula -> the same picture in greys
+            v = min(1.0, (0.299 * r + 0.587 * g + 0.114 * b) * 1.08)
+            return _to_rgb(v, v, v)
         w = _smooth(0.18, 0.45, s_hsv)                          # 0 = pale tint, 1 = real accent colour
         if style_id in DARK_STYLES:                             # dark poster: accent -> silver, tint -> soft grey
             accent, tint = 0.58 + 0.38 * l, 0.30 + 0.45 * l
@@ -238,7 +241,14 @@ STYLE_COLORS: dict[int, list[RGB]] = {
         (120, 40, 30), (40, 20, 20)],
     7: [(238, 160, 0), (250, 205, 90), (250, 190, 20), (210, 136, 0), (176, 108, 0), (60, 40, 0)],
     8: [(214, 40, 57), (255, 112, 124), (120, 40, 45), (178, 46, 58), (206, 64, 74), (150, 40, 52)],
-    9: [(176, 32, 44)],                                              # NOT the Netflix logo red / the green match %
+    9: [(16, 4, 4), (19, 6, 5), (31, 10, 9), (54, 15, 16), (58, 17, 17),
+        (60, 20, 22), (74, 23, 22), (91, 31, 32), (108, 34, 35), (104, 36, 37),
+        (115, 40, 40), (125, 40, 40), (133, 43, 42), (135, 51, 50), (148, 48, 48),
+        (148, 58, 58), (167, 56, 55), (181, 64, 64), (162, 86, 86), (195, 75, 75),
+        (176, 96, 97), (210, 95, 94), (189, 109, 109), (198, 112, 113), (200, 122, 123),
+        (225, 112, 113), (213, 131, 132), (234, 130, 128), (221, 147, 148), (229, 148, 149),
+        (227, 151, 151), (233, 155, 155), (232, 160, 160), (222, 171, 172), (238, 167, 167),
+        (234, 175, 176), (231, 186, 187), (243, 195, 195), (255, 214, 214)],                                    # the red nebula of the left panel (poster9.py: GRAD, HEADER_END, CLOUD)
     10: [(255, 112, 150), (240, 72, 120), (255, 138, 174), (255, 98, 140), (255, 206, 222), (255, 170, 196),
          (222, 230, 255), (232, 236, 247), (212, 218, 236), (196, 208, 240), (184, 196, 232), (214, 220, 240)],
     11: [(232, 32, 63), (252, 228, 233), (246, 190, 200), (244, 122, 142)],
@@ -262,8 +272,6 @@ STYLE_INK: dict[int, list[tuple[str, str, RGB, RGB]]] = {
     7: [('cv.text((X + 36, by + 38), button, cv.font("Bold", 22), DARK, anchor="lm")',
          'cv.text((X + 36, by + 38), button, cv.font("Bold", 22), {ink4}, anchor="lm")', (250, 190, 20), (40, 41, 52)),
         ("cv.circle(cx, cy, 23, fill=DARK)", "cv.circle(cx, cy, 23, fill={ink4})", (250, 190, 20), (40, 41, 52))],
-    9: [('"PLAY NOW", f_btn, (255, 255, 255), trb)', '"PLAY NOW", f_btn, {ink3}, trb)', (176, 32, 44), _W),
-        ("(ccx + S(6.5), ccy)], fill=ACCENT)", "(ccx + S(6.5), ccy)], fill={ink3})", (176, 32, 44), _W)],
     10: [("pill_text, f_btn, TEXT, S(1))", "pill_text, f_btn, {ink3}, S(1))", (255, 138, 174), (14, 18, 58)),
          ("ccx + dia // 2, ccy + dia // 2), fill=TEXT)", "ccx + dia // 2, ccy + dia // 2), fill={ink3})",
           (255, 138, 174), (14, 18, 58))],
