@@ -55,6 +55,8 @@ _FONTS = [
     ("lora", "Lora-Italic[wght].ttf", "Lora-Italic-Variable.ttf", "root"),      # poster 13/14
     ("lora", "Lora[wght].ttf", "Lora-Variable.ttf", "tpl"),                      # poster 8
     ("poppins", "Poppins-LightItalic.ttf", "Poppins-LightItalic.ttf", "tpl"),    # style 10 synopsis
+    ("poppins", "Poppins-Light.ttf", "Poppins-Light.ttf", "tpl"),                # style 9
+    ("yellowtail", "Yellowtail-Regular.ttf", "Yellowtail-Regular.ttf", "tpl"),   # style 9 (script watermark)
     ("anton", "Anton-Regular.ttf", "Anton-Regular.ttf", "tpl"),                  # poster 8
     ("bebasneue", "BebasNeue-Regular.ttf", "BebasNeue-Regular.ttf", "tpl"),     # poster 8 heading
     ("notosansjp", "NotoSansJP[wght].ttf", "NotoSansJP-Variable.ttf", "tpl"),    # poster 8 (native title)
@@ -157,7 +159,7 @@ POSTERS: dict[int, PosterStyle] = {p.id: p for p in [
     PosterStyle(6, "Style 6", "1920x1080 · poster", button=True),
     PosterStyle(7, "Style 7", "1920x1080 · poster", button=True),
     PosterStyle(8, "Style 8", "Brand lockup + info row, banner", brand=True),
-    PosterStyle(9, "Style 9", "Streaming-home look, poster + match %"),
+    PosterStyle(9, "Style 9", "Glass card, banner + poster, synopsis + rating panel", brand=True),
     PosterStyle(10, "Style 10", "White + pink, big half-circle frame, poster", button=True),
     PosterStyle(11, "Style 11", "Light 1280x720, red block + poster", button=True),
     PosterStyle(12, "Style 12", "Dark violet glow, banner background"),
@@ -580,6 +582,32 @@ async def ensure_art(a: Anime, style_id: int, opts: dict | None = None) -> None:
     await _download_art(a, url)
     if url not in a.img_cache:
         raise NoArt(kind)
+    if style_id == 9:
+        await _extras_9(a, o)
+
+
+async def _extras_9(a: Anime, o: dict) -> None:
+    """style 9 also draws the banner (left strip) and two more pictures (the thumbnails in the card).
+    All of it is optional: whatever is missing is replaced by a crop of the poster, so this never fails a poster."""
+    try:
+        await _need_image(a, "banner")
+    except Exception as e:
+        log.warning("style 9: banner not loaded: %s", e)
+    try:
+        await list_art(a, "poster")                                  # the other posters (one small AniList call, cached)
+        items = _art_items(a, "poster")
+        chosen = (o.get("pic") or 0) % len(items) if items else 0
+        for i, (_, u) in enumerate(items):
+            if i != chosen and sum(1 for _, x in items[:i] if x in a.img_cache) < 2:
+                await _download_art(a, u)
+    except Exception as e:
+        log.warning("style 9: thumbnails not loaded: %s", e)
+
+
+def _thumbs_9(a: Anime, o: dict) -> list:
+    items = _art_items(a, "poster")
+    chosen = (o.get("pic") or 0) % len(items) if items else 0
+    return [a.img_cache[u] for i, (_, u) in enumerate(items) if i != chosen and u in a.img_cache][:2]
 
 
 def _art_bytes(a: Anime, style_id: int, o: dict) -> bytes | None:
@@ -989,7 +1017,9 @@ def _render_aniraw(n, a, o):
     sel = _art_bytes(a, n, o)
     if n == 12:                                           # banner only: it is the background (the template reuses it up front)
         buf = mod.create_poster(a.raw, None, sel)
-    else:                                                  # style 9: the chosen poster = hero art
+    elif n == 9:                                           # poster = art on the right, banner = strip on the left, 2 thumbnails
+        buf = mod.create_poster(a.raw, sel, a.banner_bytes, brand=chname.clean(o.get("chname")), thumbs=_thumbs_9(a, o))
+    else:
         buf = mod.create_poster(a.raw, sel, None)
     img = Image.open(buf)
     img.load()
