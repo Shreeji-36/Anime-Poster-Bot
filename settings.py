@@ -23,9 +23,11 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import random
+import re
 
 from pyrogram import filters
-from pyrogram.errors import MessageNotModified
+from pyrogram.errors import MessageNotModified, RPCError
 from pyrogram.handlers import CallbackQueryHandler, MessageHandler
 
 import chname
@@ -72,11 +74,39 @@ def _label(kind: str) -> str:
     return f"{icon} {name}"
 
 
+def _plain_len(text: str) -> int:
+    """length of a message the way telegram counts it (tags removed) - a photo caption may have 1024 of these"""
+    return len(html.unescape(re.sub(r"<[^>]+>", "", text or "")))
+
+
 async def _edit(msg, text: str, markup=None) -> None:
+    """edit the panel message. /settings is a photo with a caption, so the caption is edited;
+    a screen that is longer than a caption (a long template) continues as a normal text message."""
     try:
-        await msg.edit_text(text, reply_markup=markup, **NO_PREVIEW)
+        if not msg.photo:
+            await msg.edit_text(text, reply_markup=markup, **NO_PREVIEW)
+        elif _plain_len(text) <= CAPTION_MAX:
+            await msg.edit_caption(text, reply_markup=markup)
+        else:
+            await msg.reply_text(text, reply_markup=markup, **NO_PREVIEW)
+            try:
+                await msg.delete()
+            except RPCError:
+                pass
     except MessageNotModified:
         pass
+
+
+async def _send_panel(client, cid: int, text: str, markup=None) -> None:
+    """a new panel: the photo of /start (one of MENU_IMAGES, picked at random) with the panel as its caption;
+    plain text when the picture can't be sent or the text is longer than a caption"""
+    if _plain_len(text) <= CAPTION_MAX and config.MENU_IMAGES:
+        try:
+            await client.send_photo(cid, random.choice(config.MENU_IMAGES), caption=text, reply_markup=markup)
+            return
+        except RPCError as e:
+            log.warning("settings image failed (%s) -> text only", e)
+    await client.send_message(cid, text, reply_markup=markup, **NO_PREVIEW)
 
 
 def _back_row(kind: str):
@@ -301,7 +331,7 @@ async def cmd_settings(client, message):
     ud = cmds._ud(uid)
     ud["await"] = None
     ud.pop("tpl_kind", None)
-    await message.reply_text(main_text(), reply_markup=main_keyboard())
+    await cmds._reply_with_image(message, main_text(), main_keyboard())          # photo + text + buttons, like /start
 
 
 # ======================================================================
@@ -346,7 +376,7 @@ async def on_mode_text(client, message):
         if mid:
             await cmds._safe_delete(client, cid, mid)
     view, markup = await (wm_view if mode == "se_wm" else bt_view)(uid, kind)
-    await client.send_message(cid, view, reply_markup=markup, **NO_PREVIEW)
+    await _send_panel(client, cid, view, markup)
 
 
 # ======================================================================
